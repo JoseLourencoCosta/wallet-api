@@ -1,0 +1,10 @@
+{
+  "name": "jose-lourenco/wallet-api",
+  "description": "REST API de carteira digital em PHP puro",
+  "type": "project",
+  "autoload": {
+    "psr-4": {
+      "App\\": "src/"
+    }
+  }
+}
