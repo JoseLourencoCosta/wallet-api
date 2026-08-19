@@ -9,5 +9,8 @@
   },
   "require-dev": {
     "phpunit/phpunit": "*"
+  },
+  "require": {
+    "symfony/uid": "^8.1"
   }
 }
