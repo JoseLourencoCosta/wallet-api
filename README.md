@@ -224,8 +224,8 @@ Os testes são executados com PHPUnit.
 Atualmente:
 
 ```text
-4 testes
-7 assertions
+9 testes
+15 assertions
 100% passando
 ```
 
@@ -235,12 +235,13 @@ Executar:
 docker compose run --rm app ./vendor/bin/phpunit
 ```
 
-Os primeiros testes cobrem o `AccountNumberGenerator`, incluindo:
+Os testes atualmente cobrem:
 
-- formato do número gerado;
-- validação do dígito;
-- rejeição de dígito incorreto;
-- rejeição de formatos inválidos.
+- geração e validação do número da conta;
+- geração de identificadores públicos ULID;
+- criação integrada de usuário e conta;
+- vínculo correto entre usuário e conta;
+- rollback transacional quando ocorre falha durante a criação da conta.
 
 ---
 
@@ -288,11 +289,15 @@ docker compose run --rm app composer install
 - [x] Validação de número de conta
 - [x] PHPUnit
 - [x] Testes unitários iniciais
+- [x] Criação transacional de usuário e conta
+- [x] UserRepository
+- [x] AccountRepository
+- [x] Rollback automático em falhas
+- [x] Testes de integração
+- [x] Configuração global do PHPUnit
 
 ### Próximas etapas
 
-- [ ] Criação de usuário
-- [ ] Abertura automática de conta
 - [ ] Credencial transacional
 - [ ] Operações financeiras
 - [ ] Ledger imutável
@@ -301,6 +306,18 @@ docker compose run --rm app composer install
 - [ ] Row locking
 - [ ] Estornos
 - [ ] API HTTP
+
+---
+
+## Garantias já implementadas
+
+O fluxo de cadastro de usuário e conta é executado dentro da mesma transação de banco.
+
+Isso garante que:
+
+```text
+usuário criado + conta criada = COMMIT
+qualquer falha durante o processo = ROLLBACK
 
 ---
 
@@ -322,3 +339,4 @@ A intenção é compreender e implementar diretamente conceitos como:
 - APIs REST.
 
 Frameworks poderão ser utilizados posteriormente para comparação, após os fundamentos estarem implementados diretamente em PHP.
+```
