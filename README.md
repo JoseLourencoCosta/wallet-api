@@ -200,20 +200,13 @@ O projeto prevê separação entre:
 
 ```text
 senha de login
-≠
+=
 senha transacional
 ```
 
-Credenciais nunca serão armazenadas em texto puro.
+A autenticação de acesso e a autorização de transações são responsabilidades distintas.
 
-A autorização financeira será isolada da lógica de transferência para permitir evolução futura para mecanismos como:
-
-- OTP;
-- 2FA;
-- biometria;
-- autorização por dispositivo.
-
-Identificadores não previsíveis não substituem autenticação e autorização.
+Na V1, a mesma credencial pode ser reutilizada para revalidação transacional, mantendo a arquitetura preparada para outros mecanismos de autorização.
 
 ---
 
@@ -224,8 +217,8 @@ Os testes são executados com PHPUnit.
 Atualmente:
 
 ```text
-9 testes
-15 assertions
+11 testes
+32 assertions
 100% passando
 ```
 
@@ -241,7 +234,12 @@ Os testes atualmente cobrem:
 - geração de identificadores públicos ULID;
 - criação integrada de usuário e conta;
 - vínculo correto entre usuário e conta;
-- rollback transacional quando ocorre falha durante a criação da conta.
+- rollback transacional quando ocorre falha durante a criação da conta;
+- depósito com atualização de saldo;
+- criação da operação financeira;
+- criação do lançamento CREDIT no ledger;
+- validação de balance_before e balance_after;
+- rejeição de depósitos inválidos sem alteração do estado financeiro.
 
 ---
 
@@ -295,15 +293,25 @@ docker compose run --rm app composer install
 - [x] Rollback automático em falhas
 - [x] Testes de integração
 - [x] Configuração global do PHPUnit
+- [x] Modelo inicial de operações financeiras
+- [x] Ledger financeiro
+- [x] OperationRepository
+- [x] LedgerEntryRepository
+- [x] Depósito
+- [x] Histórico de depósito no ledger
+- [x] Validação de valores monetários sem float
+- [x] Row locking com SELECT FOR UPDATE
+- [x] Proteção inicial contra race conditions
+- [x] Testes de integração de depósito
+- [x] Depósito inválido sem alteração do estado financeiro
 
 ### Próximas etapas
 
-- [ ] Credencial transacional
-- [ ] Operações financeiras
-- [ ] Ledger imutável
-- [ ] Depósitos
-- [ ] Transferências
-- [ ] Row locking
+- [ ] Transferências entre contas
+- [ ] Validação de saldo disponível
+- [ ] Autorização transacional
+- [ ] Ledger de débito e crédito para transferências
+- [ ] Concorrência entre transferências
 - [ ] Estornos
 - [ ] API HTTP
 
@@ -321,6 +329,35 @@ qualquer falha durante o processo = ROLLBACK
 
 ---
 
+## Depósitos
+
+O depósito é tratado como uma operação financeira atômica.
+
+O fluxo atual é:
+
+BEGIN
+ ↓
+bloqueio da conta com SELECT FOR UPDATE
+ ↓
+leitura do saldo atual
+ ↓
+criação da operação DEPOSIT
+ ↓
+atualização do saldo
+ ↓
+criação do lançamento CREDIT no ledger
+ ↓
+COMMIT
+
+Caso qualquer etapa falhe, a transação é revertida com ROLLBACK.
+
+Os valores monetários não são processados com float. A aplicação trabalha com representação decimal e conversão para centavos inteiros durante os cálculos.
+
+O ledger registra tanto o saldo anterior quanto o saldo posterior à movimentação, mantendo uma trilha financeira auditável.
+
+Um depósito inválido é rejeitado antes da alteração do estado financeiro e não gera saldo, operação ou lançamento no ledger.
+
+---
 ## Objetivo técnico
 
 Este projeto está sendo desenvolvido para aprofundar conhecimentos de backend PHP sem depender inicialmente de abstrações fornecidas por frameworks.

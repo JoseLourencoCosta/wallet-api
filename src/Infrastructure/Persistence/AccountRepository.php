@@ -48,4 +48,69 @@ final class AccountRepository
 
         return (int) $this->connection->lastInsertId();
     }
+
+    public function findBalanceById(int $accountId): string
+    {
+    $statement = $this->connection->prepare(
+        '
+        SELECT balance
+        FROM accounts
+        WHERE id = :id
+        '
+    );
+
+    $statement->execute([
+        'id' => $accountId,
+    ]);
+
+    $balance = $statement->fetchColumn();
+
+    if ($balance === false) {
+        throw new \RuntimeException('Account not found.');
+    }
+
+    return (string) $balance;
+    }
+
+    public function updateBalance(
+    int $accountId,
+    string $balance
+    ): void {
+    $statement = $this->connection->prepare(
+        '
+        UPDATE accounts
+        SET balance = :balance
+        WHERE id = :id
+        '
+    );
+
+    $statement->execute([
+        'balance' => $balance,
+        'id' => $accountId,
+    ]);
+    }
+
+    public function findBalanceForUpdate(int $accountId): string
+    {
+    $statement = $this->connection->prepare(
+        '
+        SELECT balance
+        FROM accounts
+        WHERE id = :id
+        FOR UPDATE
+        '
+    );
+
+    $statement->execute([
+        'id' => $accountId,
+    ]);
+
+    $balance = $statement->fetchColumn();
+
+    if ($balance === false) {
+        throw new \RuntimeException('Account not found.');
+    }
+
+    return (string) $balance;
+    }
 }
