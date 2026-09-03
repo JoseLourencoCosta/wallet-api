@@ -217,8 +217,8 @@ Os testes são executados com PHPUnit.
 Atualmente:
 
 ```text
-11 testes
-32 assertions
+13 testes
+58 assertions
 100% passando
 ```
 
@@ -236,10 +236,29 @@ Os testes atualmente cobrem:
 - vínculo correto entre usuário e conta;
 - rollback transacional quando ocorre falha durante a criação da conta;
 - depósito com atualização de saldo;
-- criação da operação financeira;
-- criação do lançamento CREDIT no ledger;
+- criação de operação financeira;
+- criação de lançamento CREDIT no ledger;
 - validação de balance_before e balance_after;
-- rejeição de depósitos inválidos sem alteração do estado financeiro.
+- rejeição de depósitos inválidos sem alteração do estado financeiro;
+- transferência entre duas contas;
+- criação de lançamentos DEBIT e CREDIT;
+- validação de saldo insuficiente;
+- rollback sem alteração de saldo em transferências inválidas.
+
+---
+
+## Autenticação e autorização transacional
+
+A autenticação de acesso e a autorização de transações são responsabilidades distintas.
+
+Na V1, a mesma credencial de acesso poderá ser reutilizada para revalidação de uma operação financeira.
+
+A lógica de autorização transacional permanece separada da lógica da operação, permitindo evolução futura para mecanismos como:
+
+- OTP;
+- 2FA;
+- biometria;
+- autorização por dispositivo.
 
 ---
 
@@ -284,34 +303,30 @@ docker compose run --rm app composer install
 - [x] Constraints de integridade
 - [x] Geração de número de conta
 - [x] Dígito verificador
-- [x] Validação de número de conta
-- [x] PHPUnit
-- [x] Testes unitários iniciais
+- [x] ULID para identificadores públicos
 - [x] Criação transacional de usuário e conta
 - [x] UserRepository
 - [x] AccountRepository
-- [x] Rollback automático em falhas
-- [x] Testes de integração
-- [x] Configuração global do PHPUnit
-- [x] Modelo inicial de operações financeiras
-- [x] Ledger financeiro
 - [x] OperationRepository
 - [x] LedgerEntryRepository
-- [x] Depósito
-- [x] Histórico de depósito no ledger
-- [x] Validação de valores monetários sem float
+- [x] Rollback automático
+- [x] PHPUnit
+- [x] Testes unitários
+- [x] Testes de integração
+- [x] Modelo de operações financeiras
+- [x] Ledger financeiro
+- [x] Depósitos
+- [x] Transferências
+- [x] DEBIT e CREDIT no ledger
+- [x] Validação de saldo
 - [x] Row locking com SELECT FOR UPDATE
 - [x] Proteção inicial contra race conditions
-- [x] Testes de integração de depósito
-- [x] Depósito inválido sem alteração do estado financeiro
+- [x] Ordenação de locks para reduzir deadlocks
 
 ### Próximas etapas
 
-- [ ] Transferências entre contas
-- [ ] Validação de saldo disponível
 - [ ] Autorização transacional
-- [ ] Ledger de débito e crédito para transferências
-- [ ] Concorrência entre transferências
+- [ ] Testes de concorrência real
 - [ ] Estornos
 - [ ] API HTTP
 
@@ -323,7 +338,7 @@ O fluxo de cadastro de usuário e conta é executado dentro da mesma transação
 
 Isso garante que:
 
-```text
+````text
 usuário criado + conta criada = COMMIT
 qualquer falha durante o processo = ROLLBACK
 
@@ -357,7 +372,55 @@ O ledger registra tanto o saldo anterior quanto o saldo posterior à movimentaç
 
 Um depósito inválido é rejeitado antes da alteração do estado financeiro e não gera saldo, operação ou lançamento no ledger.
 
+## Transferências
+
+A transferência entre contas é executada dentro de uma única transação de banco.
+
+As duas contas envolvidas são bloqueadas com `SELECT ... FOR UPDATE`.
+
+Os locks são adquiridos seguindo a ordem dos IDs das contas para reduzir risco de deadlocks em operações concorrentes.
+
+O fluxo atual é:
+
+```text
+BEGIN
+ ↓
+bloqueio das contas
+ ↓
+validação de status
+ ↓
+validação de saldo
+ ↓
+criação da operação TRANSFER
+ ↓
+débito da origem
+ ↓
+crédito do destino
+ ↓
+ledger DEBIT
+ ↓
+ledger CREDIT
+ ↓
+COMMIT
+````
+
+Se qualquer etapa falhar:
+
+```text
+ROLLBACK
+```
+
+Uma transferência produz dois lançamentos no ledger:
+
+```text
+conta origem  → DEBIT
+conta destino → CREDIT
+```
+
+O histórico registra saldo anterior e saldo posterior de cada conta.
+
 ---
+
 ## Objetivo técnico
 
 Este projeto está sendo desenvolvido para aprofundar conhecimentos de backend PHP sem depender inicialmente de abstrações fornecidas por frameworks.
@@ -376,4 +439,7 @@ A intenção é compreender e implementar diretamente conceitos como:
 - APIs REST.
 
 Frameworks poderão ser utilizados posteriormente para comparação, após os fundamentos estarem implementados diretamente em PHP.
+
+```
+
 ```
