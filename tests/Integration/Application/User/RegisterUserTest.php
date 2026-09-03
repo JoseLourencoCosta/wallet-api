@@ -18,19 +18,60 @@ final class RegisterUserTest extends TestCase
     private PDO $connection;
 
     protected function setUp(): void
-    {
-        $this->connection = ConnectionFactory::create();
+{
+    $this->connection = ConnectionFactory::create();
 
-        $this->connection->exec(
-            "DELETE FROM accounts WHERE user_id IN (
-                SELECT id FROM users WHERE email LIKE '%@integration.wallet.local'
-            )"
-        );
+    $this->connection->exec(
+        "
+        DELETE FROM ledger_entries
+        WHERE account_id IN (
+            SELECT a.id
+            FROM accounts a
+            INNER JOIN users u
+                ON u.id = a.user_id
+            WHERE u.email LIKE '%@integration.wallet.local'
+        )
+        "
+    );
 
-        $this->connection->exec(
-            "DELETE FROM users WHERE email LIKE '%@integration.wallet.local'"
-        );
-    }
+    $this->connection->exec(
+        "
+        DELETE FROM operations
+        WHERE source_account_id IN (
+            SELECT a.id
+            FROM accounts a
+            INNER JOIN users u
+                ON u.id = a.user_id
+            WHERE u.email LIKE '%@integration.wallet.local'
+        )
+        OR destination_account_id IN (
+            SELECT a.id
+            FROM accounts a
+            INNER JOIN users u
+                ON u.id = a.user_id
+            WHERE u.email LIKE '%@integration.wallet.local'
+        )
+        "
+    );
+
+    $this->connection->exec(
+        "
+        DELETE FROM accounts
+        WHERE user_id IN (
+            SELECT id
+            FROM users
+            WHERE email LIKE '%@integration.wallet.local'
+        )
+        "
+    );
+
+    $this->connection->exec(
+        "
+        DELETE FROM users
+        WHERE email LIKE '%@integration.wallet.local'
+        "
+    );
+}
 
     public function testUserAndAccountAreCreatedTogether(): void
     {
