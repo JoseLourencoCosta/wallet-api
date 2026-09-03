@@ -113,4 +113,51 @@ final class AccountRepository
 
     return (string) $balance;
     }
+
+    public function findTwoForUpdate(
+    int $firstAccountId,
+    int $secondAccountId
+): array {
+    $accountIds = [
+        $firstAccountId,
+        $secondAccountId,
+    ];
+
+    sort($accountIds);
+
+    $statement = $this->connection->prepare(
+        '
+        SELECT
+            id,
+            user_id,
+            balance,
+            status
+        FROM accounts
+        WHERE id IN (:first_id, :second_id)
+        ORDER BY id
+        FOR UPDATE
+        '
+    );
+
+    $statement->execute([
+        'first_id' => $accountIds[0],
+        'second_id' => $accountIds[1],
+    ]);
+
+    $accounts = $statement->fetchAll();
+
+    if (count($accounts) !== 2) {
+        throw new \RuntimeException(
+            'One or more accounts were not found.'
+        );
+    }
+
+    $result = [];
+
+    foreach ($accounts as $account) {
+        $result[(int) $account['id']] = $account;
+    }
+
+    return $result;
+ }
 }
