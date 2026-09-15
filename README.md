@@ -1,10 +1,10 @@
 # Wallet API
 
-API de carteira digital desenvolvida em **PHP puro**, sem framework, com foco em fundamentos de engenharia de backend, modelagem financeira, integridade de dados, testes automatizados e evolução arquitetural.
+API de carteira digital desenvolvida em **PHP puro, sem framework**, com foco em fundamentos de engenharia de backend, modelagem financeira, integridade de dados, transações, concorrência, segurança e testes automatizados.
 
 > 🚧 Projeto em desenvolvimento.
 
-O objetivo deste projeto não é apenas implementar endpoints, mas explorar decisões normalmente encontradas em sistemas financeiros: controle de saldo, trilha de auditoria, transações atômicas, concorrência, autenticação transacional e histórico imutável de movimentações.
+O objetivo não é apenas implementar endpoints CRUD, mas explorar problemas encontrados em sistemas financeiros, como controle de saldo, trilha de auditoria, atomicidade, autorização transacional, concorrência, idempotência e histórico imutável de movimentações.
 
 ---
 
@@ -19,7 +19,7 @@ O objetivo deste projeto não é apenas implementar endpoints, mas explorar deci
 - PSR-4
 - PHPUnit 13
 
-O projeto é executado em containers e não depende de PHP ou MySQL instalados diretamente na máquina do desenvolvedor.
+O ambiente é executado em containers e não depende de PHP ou MySQL instalados diretamente na máquina do desenvolvedor.
 
 ---
 
@@ -30,17 +30,26 @@ wallet-api/
 ├── database/
 │   └── migrations/
 ├── src/
+│   ├── Application/
+│   │   ├── Financial/
+│   │   ├── Security/
+│   │   └── User/
 │   ├── Domain/
 │   │   └── Account/
 │   ├── Infrastructure/
-│   │   └── Database/
+│   │   ├── Database/
+│   │   └── Persistence/
 │   └── Support/
+│       └── Identifier/
 ├── tests/
+│   ├── Integration/
+│   │   └── Application/
 │   └── Unit/
 ├── Dockerfile
 ├── compose.yaml
 ├── composer.json
-└── composer.lock
+├── composer.lock
+└── phpunit.xml
 ```
 
 O projeto utiliza autoload PSR-4:
@@ -49,15 +58,15 @@ O projeto utiliza autoload PSR-4:
 App\ → src/
 ```
 
+As responsabilidades são separadas de forma gradual conforme surgem necessidades reais no domínio, evitando criar camadas apenas por convenção.
+
 ---
 
 ## Decisões de domínio
 
-Algumas decisões já adotadas:
-
 ### Valores monetários
 
-Valores financeiros são armazenados utilizando:
+Valores financeiros são persistidos como:
 
 ```sql
 DECIMAL(19,2)
@@ -65,48 +74,59 @@ DECIMAL(19,2)
 
 `FLOAT` e `DOUBLE` não são utilizados para dinheiro devido à representação aproximada desses tipos.
 
+Durante cálculos financeiros da aplicação, os valores são convertidos para centavos inteiros, evitando cálculos monetários com ponto flutuante.
+
+---
+
 ### Identificação das contas
 
-A identidade técnica da conta é separada da identidade apresentada ao usuário.
+A identidade técnica da conta é separada da identidade apresentada externamente.
 
 ```text
-ID interno      → BIGINT AUTO_INCREMENT
-Public ID       → identificador não sequencial
+ID interno      → BIGINT UNSIGNED AUTO_INCREMENT
+Public ID       → ULID de 26 caracteres
 Agência         → 0001
-Conta           → 6 dígitos aleatórios
+Conta           → 6 dígitos
 Dígito          → dígito verificador calculado
 ```
 
-O número da conta não é utilizado como chave primária.
+O número da conta não é utilizado como chave primária nem como relacionamento interno entre tabelas.
 
-### Integridade
+---
 
-O banco também protege regras importantes do domínio.
+### Integridade no banco
+
+Regras importantes também são protegidas pelo banco de dados.
 
 Exemplos:
 
 ```text
 saldo negativo             → bloqueado
 agência + conta duplicadas → bloqueadas
+valor financeiro <= 0      → bloqueado
 ```
 
-A tabela `accounts` possui constraint:
+Entre as constraints existentes:
 
 ```sql
 CHECK (balance >= 0)
 ```
 
-e:
-
 ```sql
 UNIQUE (agency, account_number)
 ```
+
+```sql
+CHECK (amount > 0)
+```
+
+A validação na aplicação melhora o comportamento para o usuário, enquanto as constraints do banco funcionam como última linha de defesa da integridade.
 
 ---
 
 ## Account Number Generator
 
-A geração do número da conta foi isolada em um componente de domínio:
+A geração do número da conta está isolada no componente:
 
 ```text
 AccountNumberGenerator
@@ -114,27 +134,71 @@ AccountNumberGenerator
 
 Responsabilidades:
 
-- gerar conta aleatória de 6 dígitos;
+- gerar conta de 6 dígitos;
 - calcular dígito verificador;
 - validar número e dígito;
-- permitir substituição futura da regra sem alterar o restante da aplicação.
+- permitir substituição futura do algoritmo sem alterar o restante da aplicação.
 
 O dígito verificador utiliza atualmente uma regra baseada em módulo 11.
 
 ---
 
-## Modelo financeiro planejado
+## Identificadores públicos
 
-O saldo não será tratado como um valor que pode ser alterado arbitrariamente.
+Entidades expostas externamente utilizam ULID como identificador público.
 
-Toda movimentação financeira deverá possuir uma operação correspondente.
+A geração está isolada em:
+
+```text
+PublicIdGenerator
+```
+
+A implementação atual utiliza `symfony/uid`, mas o restante da aplicação não depende diretamente da biblioteca.
+
+Isso permite substituir o mecanismo de geração futuramente sem espalhar essa dependência pelo domínio.
+
+---
+
+## Cadastro de usuário e conta
+
+Usuário e conta são criados dentro da mesma transação de banco.
+
+```text
+BEGIN
+ ↓
+criação do usuário
+ ↓
+geração da conta
+ ↓
+criação da conta
+ ↓
+COMMIT
+```
+
+Se qualquer etapa falhar:
+
+```text
+ROLLBACK
+```
+
+Isso impede a existência de usuários cadastrados parcialmente, sem a conta correspondente.
+
+O comportamento de rollback é validado por teste de integração.
+
+---
+
+## Modelo financeiro
+
+O saldo não é tratado como um valor que pode ser alterado arbitrariamente.
+
+Toda movimentação financeira deve possuir uma operação correspondente e produzir registros no ledger.
 
 ```text
 Operation
    │
    ├── DEPOSIT
    ├── TRANSFER
-   └── REVERSAL
+   └── REVERSAL (planejado)
         │
         ▼
 Ledger Entries
@@ -142,71 +206,217 @@ Ledger Entries
    └── DEBIT
 ```
 
-Uma transferência deverá produzir:
+As tabelas principais são:
 
 ```text
-Conta origem
-DEBIT
-
-Conta destino
-CREDIT
+accounts
+operations
+ledger_entries
 ```
 
-dentro da mesma transação de banco.
+`accounts.balance` representa o estado atual otimizado para leitura.
 
-O histórico financeiro será imutável.
+`operations` representa o evento financeiro.
 
-Um estorno criará uma nova operação compensatória em vez de apagar ou modificar a movimentação original.
+`ledger_entries` registra o impacto financeiro da operação sobre cada conta.
+
+Os lançamentos do ledger armazenam:
+
+```text
+balance_before
+balance_after
+```
+
+permitindo reconstrução e auditoria da movimentação.
+
+O histórico financeiro é tratado como imutável por regra arquitetural. Correções futuras deverão ocorrer por operações compensatórias, e não pela alteração silenciosa do passado.
 
 ---
 
-## Concorrência e consistência
+## Depósitos
 
-As transferências serão implementadas utilizando transações MySQL.
-
-O fluxo planejado inclui:
+O depósito é tratado como uma operação financeira atômica.
 
 ```text
 BEGIN
  ↓
-bloquear contas
+SELECT ... FOR UPDATE
  ↓
-validar saldo
+leitura do saldo
  ↓
-debitar origem
+criação da operação DEPOSIT
  ↓
-creditar destino
+atualização do saldo
  ↓
-registrar operação
- ↓
-registrar ledger
+criação do lançamento CREDIT
  ↓
 COMMIT
 ```
 
-Em qualquer falha:
+Caso qualquer etapa falhe:
 
 ```text
 ROLLBACK
 ```
 
-Também será utilizado row locking para evitar race conditions em transferências concorrentes.
+Um depósito gera:
+
+```text
+operations
+type = DEPOSIT
+
+ledger_entries
+entry_type = CREDIT
+```
+
+O ledger registra o saldo antes e depois da movimentação.
+
+Depósitos com valores inválidos são rejeitados antes da alteração do estado financeiro.
 
 ---
 
-## Segurança
+## Transferências
 
-O projeto prevê separação entre:
+A transferência entre duas contas é executada dentro de uma única transação de banco.
 
-```text
-senha de login
-=
-senha transacional
+As duas contas são bloqueadas antes da movimentação utilizando:
+
+```sql
+SELECT ... FOR UPDATE
 ```
 
-A autenticação de acesso e a autorização de transações são responsabilidades distintas.
+Os locks são adquiridos em ordem crescente de ID das contas para reduzir o risco de deadlocks quando operações concorrentes envolvem as mesmas contas.
 
-Na V1, a mesma credencial pode ser reutilizada para revalidação transacional, mantendo a arquitetura preparada para outros mecanismos de autorização.
+O fluxo atual é:
+
+```text
+BEGIN
+ ↓
+bloqueio das duas contas
+ ↓
+validação de propriedade da conta de origem
+ ↓
+autorização transacional
+ ↓
+validação de status
+ ↓
+validação de saldo disponível
+ ↓
+criação da operação TRANSFER
+ ↓
+débito da origem
+ ↓
+crédito do destino
+ ↓
+ledger DEBIT
+ ↓
+ledger CREDIT
+ ↓
+COMMIT
+```
+
+Se qualquer etapa falhar:
+
+```text
+ROLLBACK
+```
+
+Uma transferência de `25.50`, por exemplo, produz:
+
+```text
+Conta origem
+DEBIT 25.50
+
+Conta destino
+CREDIT 25.50
+```
+
+Os dois lançamentos pertencem à mesma operação financeira.
+
+Transferências com saldo insuficiente são rejeitadas sem alteração dos saldos e sem criação de histórico parcial.
+
+---
+
+## Autenticação e autorização transacional
+
+Autenticação de acesso e autorização de uma operação financeira são responsabilidades diferentes.
+
+```text
+Autenticação
+→ quem é o usuário?
+
+Autorização transacional
+→ este usuário pode executar esta operação?
+```
+
+Na V1, a mesma senha utilizada no acesso é reutilizada para revalidação da transferência.
+
+Isso não significa que autenticação e autorização sejam a mesma responsabilidade.
+
+Antes de uma transferência:
+
+```text
+usuário
+ ↓
+é proprietário da conta de origem?
+ ↓
+senha válida?
+ ↓
+conta ativa?
+ ↓
+saldo suficiente?
+ ↓
+transferência autorizada
+```
+
+A autorização atual é registrada como:
+
+```text
+authorization_method = PASSWORD
+```
+
+Uma senha válida não autoriza o usuário a movimentar uma conta pertencente a outra pessoa.
+
+Tentativas com:
+
+```text
+senha inválida
+ou
+usuário não proprietário
+```
+
+são rejeitadas antes de qualquer movimentação financeira.
+
+A arquitetura permite substituir ou complementar o mecanismo futuramente com:
+
+- OTP;
+- 2FA;
+- biometria;
+- autorização por dispositivo.
+
+---
+
+## Concorrência e consistência
+
+O projeto já utiliza transações MySQL e row locking nas movimentações financeiras.
+
+Depósitos utilizam lock da conta antes da leitura e atualização do saldo.
+
+Transferências bloqueiam as duas contas envolvidas.
+
+Isso evita o padrão vulnerável:
+
+```text
+ler saldo
+calcular
+gravar
+```
+
+quando duas operações concorrentes poderiam utilizar o mesmo saldo antigo e sobrescrever resultados.
+
+A ordenação dos locks por ID reduz a possibilidade de deadlock entre transferências em sentidos opostos.
+
+Testes específicos de concorrência executando operações simultâneas ainda fazem parte das próximas etapas.
 
 ---
 
@@ -217,48 +427,40 @@ Os testes são executados com PHPUnit.
 Atualmente:
 
 ```text
-13 testes
-58 assertions
+15 testes
+66 assertions
 100% passando
 ```
 
-Executar:
+Executar toda a suíte:
 
 ```bash
 docker compose run --rm app ./vendor/bin/phpunit
 ```
 
-Os testes atualmente cobrem:
+A cobertura comportamental atual inclui:
 
-- geração e validação do número da conta;
-- geração de identificadores públicos ULID;
+- geração de número de conta;
+- cálculo e validação do dígito;
+- geração de ULIDs;
 - criação integrada de usuário e conta;
-- vínculo correto entre usuário e conta;
-- rollback transacional quando ocorre falha durante a criação da conta;
-- depósito com atualização de saldo;
-- criação de operação financeira;
-- criação de lançamento CREDIT no ledger;
-- validação de balance_before e balance_after;
-- rejeição de depósitos inválidos sem alteração do estado financeiro;
+- rollback na criação de usuário e conta;
+- depósito;
+- atualização de saldo;
+- operação `DEPOSIT`;
+- ledger `CREDIT`;
+- rejeição de depósito inválido;
 - transferência entre duas contas;
-- criação de lançamentos DEBIT e CREDIT;
+- operação `TRANSFER`;
+- ledger `DEBIT` e `CREDIT`;
 - validação de saldo insuficiente;
-- rollback sem alteração de saldo em transferências inválidas.
+- rollback de transferências inválidas;
+- autorização transacional por senha;
+- rejeição de senha incorreta;
+- validação de propriedade da conta de origem;
+- bloqueio da tentativa de movimentar conta de outro usuário.
 
----
-
-## Autenticação e autorização transacional
-
-A autenticação de acesso e a autorização de transações são responsabilidades distintas.
-
-Na V1, a mesma credencial de acesso poderá ser reutilizada para revalidação de uma operação financeira.
-
-A lógica de autorização transacional permanece separada da lógica da operação, permitindo evolução futura para mecanismos como:
-
-- OTP;
-- 2FA;
-- biometria;
-- autorização por dispositivo.
+Os testes de integração criam seus próprios dados e realizam limpeza respeitando as relações de foreign key.
 
 ---
 
@@ -270,7 +472,9 @@ Clone o repositório e crie o arquivo de ambiente:
 cp .env.example .env
 ```
 
-Configure as variáveis necessárias e construa o ambiente:
+Configure as variáveis necessárias.
+
+Construa a imagem:
 
 ```bash
 docker compose build
@@ -288,6 +492,12 @@ Instale as dependências:
 docker compose run --rm app composer install
 ```
 
+Execute os testes:
+
+```bash
+docker compose run --rm app ./vendor/bin/phpunit
+```
+
 ---
 
 ## Status do desenvolvimento
@@ -299,147 +509,141 @@ docker compose run --rm app composer install
 - [x] MySQL 8.4
 - [x] PDO MySQL
 - [x] Configuração por variáveis de ambiente
-- [x] Migration inicial de usuários e contas
+- [x] Migration de usuários e contas
+- [x] Migration de operações e ledger
 - [x] Constraints de integridade
+- [x] ULID para identificadores públicos
 - [x] Geração de número de conta
 - [x] Dígito verificador
-- [x] ULID para identificadores públicos
 - [x] Criação transacional de usuário e conta
 - [x] UserRepository
 - [x] AccountRepository
 - [x] OperationRepository
 - [x] LedgerEntryRepository
-- [x] Rollback automático
+- [x] Depósitos
+- [x] Transferências
+- [x] Ledger financeiro
+- [x] Lançamentos CREDIT
+- [x] Lançamentos DEBIT
+- [x] Registro de balance_before e balance_after
+- [x] Rollback automático em falhas
+- [x] Validação de saldo disponível
+- [x] Row locking com SELECT FOR UPDATE
+- [x] Ordenação de locks para redução de deadlocks
+- [x] Proteção inicial contra race conditions
+- [x] Separação entre autenticação e autorização transacional
+- [x] Revalidação de senha em transferências
+- [x] Validação de propriedade da conta de origem
+- [x] Bloqueio de transferência com senha inválida
+- [x] Bloqueio de movimentação de conta de terceiro
 - [x] PHPUnit
 - [x] Testes unitários
 - [x] Testes de integração
-- [x] Modelo de operações financeiras
-- [x] Ledger financeiro
-- [x] Depósitos
-- [x] Transferências
-- [x] DEBIT e CREDIT no ledger
-- [x] Validação de saldo
-- [x] Row locking com SELECT FOR UPDATE
-- [x] Proteção inicial contra race conditions
-- [x] Ordenação de locks para reduzir deadlocks
+- [x] 15 testes / 66 assertions
 
 ### Próximas etapas
 
-- [ ] Autorização transacional
+- [ ] Idempotência de operações financeiras
 - [ ] Testes de concorrência real
-- [ ] Estornos
-- [ ] API HTTP
+- [ ] Estornos com operação compensatória
+- [ ] Split Payment IBS/CBS
+- [ ] API HTTP REST
 
 ---
 
-## Garantias já implementadas
+## Roadmap financeiro
 
-O fluxo de cadastro de usuário e conta é executado dentro da mesma transação de banco.
+### Idempotência
 
-Isso garante que:
+Impedir que a repetição da mesma requisição financeira gere duas operações.
 
-````text
-usuário criado + conta criada = COMMIT
-qualquer falha durante o processo = ROLLBACK
+Exemplo:
+
+```text
+requisição enviada
+ ↓
+timeout na resposta
+ ↓
+cliente repete a requisição
+ ↓
+mesma operação é recuperada
+em vez de executar novamente
+```
 
 ---
 
-## Depósitos
+### Concorrência real
 
-O depósito é tratado como uma operação financeira atômica.
+Executar testes com operações simultâneas para validar:
 
-O fluxo atual é:
+- row locking;
+- consistência dos saldos;
+- ausência de lost updates;
+- comportamento diante de deadlocks.
 
-BEGIN
- ↓
-bloqueio da conta com SELECT FOR UPDATE
- ↓
-leitura do saldo atual
- ↓
-criação da operação DEPOSIT
- ↓
-atualização do saldo
- ↓
-criação do lançamento CREDIT no ledger
- ↓
-COMMIT
+---
 
-Caso qualquer etapa falhe, a transação é revertida com ROLLBACK.
+### Estornos
 
-Os valores monetários não são processados com float. A aplicação trabalha com representação decimal e conversão para centavos inteiros durante os cálculos.
+Estornos não deverão alterar ou apagar movimentações antigas.
 
-O ledger registra tanto o saldo anterior quanto o saldo posterior à movimentação, mantendo uma trilha financeira auditável.
-
-Um depósito inválido é rejeitado antes da alteração do estado financeiro e não gera saldo, operação ou lançamento no ledger.
-
-## Transferências
-
-A transferência entre contas é executada dentro de uma única transação de banco.
-
-As duas contas envolvidas são bloqueadas com `SELECT ... FOR UPDATE`.
-
-Os locks são adquiridos seguindo a ordem dos IDs das contas para reduzir risco de deadlocks em operações concorrentes.
-
-O fluxo atual é:
+Uma reversão será registrada como nova operação relacionada à original:
 
 ```text
-BEGIN
- ↓
-bloqueio das contas
- ↓
-validação de status
- ↓
-validação de saldo
- ↓
-criação da operação TRANSFER
- ↓
-débito da origem
- ↓
-crédito do destino
- ↓
-ledger DEBIT
- ↓
-ledger CREDIT
- ↓
-COMMIT
-````
-
-Se qualquer etapa falhar:
-
-```text
-ROLLBACK
+TRANSFER original
+       ↓
+REVERSAL
+       ↓
+lançamentos compensatórios
 ```
 
-Uma transferência produz dois lançamentos no ledger:
+---
 
-```text
-conta origem  → DEBIT
-conta destino → CREDIT
-```
+### Split Payment IBS/CBS
 
-O histórico registra saldo anterior e saldo posterior de cada conta.
+O projeto deverá incluir uma implementação de estudo do **Split Payment relacionado ao IBS/CBS**, considerando a evolução do modelo tributário brasileiro.
+
+A intenção é utilizar a infraestrutura financeira já construída para explorar:
+
+- segregação entre valor comercial e tributos;
+- rastreabilidade no ledger;
+- operações vinculadas;
+- idempotência;
+- conciliação;
+- retries;
+- pagamentos parcelados;
+- integração simulada com especificações oficiais.
+
+A implementação será baseada na documentação oficial disponível quando essa etapa for iniciada.
+
+---
+
+### API HTTP
+
+Após consolidar as regras financeiras e suas garantias, o domínio será exposto por uma API HTTP REST.
+
+A camada HTTP não deverá conter as regras financeiras, funcionando como porta de entrada para os casos de uso já existentes.
 
 ---
 
 ## Objetivo técnico
 
-Este projeto está sendo desenvolvido para aprofundar conhecimentos de backend PHP sem depender inicialmente de abstrações fornecidas por frameworks.
+Este projeto está sendo desenvolvido para aprofundar conhecimentos de backend PHP sem depender inicialmente das abstrações fornecidas por frameworks.
 
-A intenção é compreender e implementar diretamente conceitos como:
+A intenção é implementar e compreender diretamente conceitos como:
 
 - orientação a objetos;
 - domínio;
 - persistência;
 - transações;
 - concorrência;
+- autorização;
 - segurança;
-- integridade;
-- testes;
+- integridade de dados;
+- ledger financeiro;
+- idempotência;
+- testes automatizados;
 - arquitetura;
 - APIs REST.
 
-Frameworks poderão ser utilizados posteriormente para comparação, após os fundamentos estarem implementados diretamente em PHP.
-
-```
-
-```
+Frameworks poderão ser utilizados posteriormente para comparação, depois que os fundamentos estiverem implementados diretamente em PHP.
