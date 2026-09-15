@@ -44,4 +44,27 @@ final class UserRepository
 
         return (int) $this->connection->lastInsertId();
     }
+
+    public function findPasswordHashById(int $userId): string
+{
+    $statement = $this->connection->prepare(
+        '
+        SELECT password_hash
+        FROM users
+        WHERE id = :id
+        '
+    );
+
+    $statement->execute([
+        'id' => $userId,
+    ]);
+
+    $passwordHash = $statement->fetchColumn();
+
+    if ($passwordHash === false) {
+        throw new \RuntimeException('User not found.');
+    }
+
+    return (string) $passwordHash;
+}
 }

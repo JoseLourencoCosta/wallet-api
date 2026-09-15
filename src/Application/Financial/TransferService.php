@@ -8,6 +8,7 @@ use App\Infrastructure\Persistence\AccountRepository;
 use App\Infrastructure\Persistence\LedgerEntryRepository;
 use App\Infrastructure\Persistence\OperationRepository;
 use App\Support\Identifier\PublicIdGenerator;
+use App\Application\Security\PasswordTransactionAuthorizer;
 use InvalidArgumentException;
 use PDO;
 use RuntimeException;
@@ -20,16 +21,18 @@ final class TransferService
         private AccountRepository $accountRepository,
         private OperationRepository $operationRepository,
         private LedgerEntryRepository $ledgerEntryRepository,
-        private PublicIdGenerator $publicIdGenerator
+        private PublicIdGenerator $publicIdGenerator,
+        private PasswordTransactionAuthorizer $transactionAuthorizer
     ) {
     }
 
     public function execute(
-        int $sourceAccountId,
-        int $destinationAccountId,
-        string $amount,
-        int $actorId
-    ): array {
+    int $sourceAccountId,
+    int $destinationAccountId,
+    string $amount,
+    int $actorId,
+    string $password
+): array {
         if ($sourceAccountId === $destinationAccountId) {
             throw new InvalidArgumentException(
                 'Source and destination accounts must be different.'
@@ -54,6 +57,21 @@ final class TransferService
 
             $sourceAccount = $accounts[$sourceAccountId];
             $destinationAccount = $accounts[$destinationAccountId];
+
+            if ((int) $sourceAccount['user_id'] !== $actorId) {
+    throw new RuntimeException(
+        'User is not authorized to operate this account.'
+    );
+}
+
+if (!$this->transactionAuthorizer->authorize(
+    $actorId,
+    $password
+)) {
+    throw new RuntimeException(
+        'Invalid transaction authorization.'
+    );
+}
 
             if ($sourceAccount['status'] !== 'ACTIVE') {
                 throw new RuntimeException(
