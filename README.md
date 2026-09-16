@@ -18,6 +18,7 @@ O objetivo não é apenas implementar endpoints CRUD, mas explorar problemas enc
 - PDO
 - PSR-4
 - PHPUnit 13
+- PCNTL para testes multiprocesso
 
 O ambiente é executado em containers e não depende de PHP ou MySQL instalados diretamente na máquina do desenvolvedor.
 
@@ -457,7 +458,7 @@ A arquitetura permite substituir ou complementar o mecanismo futuramente com:
 
 ## Concorrência e consistência
 
-O projeto já utiliza transações MySQL e row locking nas movimentações financeiras.
+O projeto utiliza transações MySQL e row locking nas movimentações financeiras.
 
 Depósitos utilizam lock da conta antes da leitura e atualização do saldo.
 
@@ -475,7 +476,27 @@ quando duas operações concorrentes poderiam utilizar o mesmo saldo antigo e so
 
 A ordenação dos locks por ID reduz a possibilidade de deadlock entre transferências em sentidos opostos.
 
-Testes específicos de concorrência executando operações simultâneas ainda fazem parte das próximas etapas.
+A proteção contra concorrência também é validada por teste de integração multiprocesso.
+
+O cenário atual executa duas transferências simultâneas de `80.00` contra uma conta com saldo inicial de `100.00`.
+
+```text
+saldo inicial: 100.00
+
+processo A → tenta transferir 80.00
+processo B → tenta transferir 80.00
+
+resultado esperado:
+1 transferência concluída
+1 transferência rejeitada por saldo insuficiente
+
+saldo final origem: 20.00
+saldo final destino: 80.00
+```
+
+Cada processo utiliza uma conexão PDO independente, permitindo validar contenção real no banco com `SELECT ... FOR UPDATE`.
+
+Esse teste demonstra que duas operações concorrentes não conseguem consumir o mesmo saldo disponível.
 
 ---
 
@@ -486,8 +507,8 @@ Os testes são executados com PHPUnit.
 Atualmente:
 
 ```text
-17 testes
-77 assertions
+18 testes
+85 assertions
 100% passando
 ```
 
@@ -517,11 +538,14 @@ A cobertura comportamental atual inclui:
 - autorização transacional por senha;
 - rejeição de senha incorreta;
 - validação de propriedade da conta de origem;
-- bloqueio da tentativa de movimentar conta de outro usuário.
+- bloqueio da tentativa de movimentar conta de outro usuário;
 - repetição idempotente de transferência;
 - prevenção de débito duplicado;
 - reutilização da operação financeira original;
-- rejeição de `idempotency_key` reutilizada com dados diferentes.
+- rejeição de `idempotency_key` reutilizada com dados diferentes;
+- concorrência real entre transferências;
+- contenção de saldo com `SELECT ... FOR UPDATE`;
+- prevenção de double spend em operações simultâneas.
 
 Os testes de integração criam seus próprios dados e realizam limpeza respeitando as relações de foreign key.
 
@@ -593,25 +617,26 @@ docker compose run --rm app ./vendor/bin/phpunit
 - [x] Validação de saldo disponível
 - [x] Row locking com SELECT FOR UPDATE
 - [x] Ordenação de locks para redução de deadlocks
-- [x] Proteção inicial contra race conditions
+- [x] Proteção contra race conditions
 - [x] Separação entre autenticação e autorização transacional
 - [x] Revalidação de senha em transferências
 - [x] Validação de propriedade da conta de origem
 - [x] Bloqueio de transferência com senha inválida
 - [x] Bloqueio de movimentação de conta de terceiro
-- [x] PHPUnit
-- [x] Testes unitários
-- [x] Testes de integração
-- [x] Idempotency key em operações financeiras
+- [x] Idempotency key em transferências
 - [x] Constraint UNIQUE para idempotency_key
 - [x] Replay idempotente de transferências
 - [x] Prevenção de débito/crédito duplicado
 - [x] Detecção de conflito de idempotency key
-- [x] 17 testes / 77 assertions
+- [x] Teste de concorrência real com processos simultâneos
+- [x] Prevenção de double spend concorrente
+- [x] PHPUnit
+- [x] Testes unitários
+- [x] Testes de integração
+- [x] 18 testes / 85 assertions
 
 ### Próximas etapas
 
-- [ ] Testes de concorrência real
 - [ ] Estornos com operação compensatória
 - [ ] Split Payment IBS/CBS
 - [ ] API HTTP REST
@@ -619,17 +644,6 @@ docker compose run --rm app ./vendor/bin/phpunit
 ---
 
 ## Roadmap financeiro
-
-### Concorrência real
-
-Executar testes com operações simultâneas para validar:
-
-- row locking;
-- consistência dos saldos;
-- ausência de lost updates;
-- comportamento diante de deadlocks.
-
----
 
 ### Estornos
 
