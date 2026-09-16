@@ -497,7 +497,6 @@ final class TransferServiceTest extends TestCase
             'type' => 'TRANSFER',
             'source_id' => $this->sourceAccountId,
             'destination_id' => $this->destinationAccountId,
-            'SenhaTeste123!'
         ]);
 
         self::assertSame(
@@ -522,7 +521,6 @@ final class TransferServiceTest extends TestCase
             'source_id' => $this->sourceAccountId,
             'destination_id' => $this->destinationAccountId,
             'type' => 'TRANSFER',
-            'SenhaTeste123!'
         ]);
 
         self::assertSame(
@@ -717,6 +715,144 @@ final class TransferServiceTest extends TestCase
 
         $operationStatement->execute([
             'idempotency_key' => $idempotencyKey,
+        ]);
+
+        self::assertSame(
+            1,
+            (int) $operationStatement->fetchColumn()
+        );
+    }
+
+    public function testConcurrentTransfersCannotSpendSameBalanceTwice(): void
+    {
+        $startFile = sys_get_temp_dir()
+            . '/wallet-transfer-concurrency-'
+            . bin2hex(random_bytes(8));
+
+        $runTransfer = function (
+            string $idempotencyKey
+        ) use ($startFile): never {
+            while (!file_exists($startFile)) {
+                usleep(1000);
+            }
+
+            try {
+                $connection = ConnectionFactory::create();
+
+                $service = new TransferService(
+                    $connection,
+                    new AccountRepository($connection),
+                    new OperationRepository($connection),
+                    new LedgerEntryRepository($connection),
+                    new PublicIdGenerator(),
+                    new PasswordTransactionAuthorizer(
+                        new UserRepository($connection)
+                    )
+                );
+
+                $service->execute(
+                    $this->sourceAccountId,
+                    $this->destinationAccountId,
+                    '80.00',
+                    $this->sourceUserId,
+                    'SenhaTeste123!',
+                    $idempotencyKey
+                );
+
+                exit(0);
+            } catch (\RuntimeException $exception) {
+                if ($exception->getMessage() === 'Insufficient balance.') {
+                    exit(2);
+                }
+
+                exit(3);
+            } catch (\Throwable) {
+                exit(4);
+            }
+        };
+
+        $firstPid = pcntl_fork();
+
+        self::assertNotSame(-1, $firstPid);
+
+        if ($firstPid === 0) {
+            $runTransfer('INTEGRATION-CONCURRENT-TRANSFER-001');
+        }
+
+        $secondPid = pcntl_fork();
+
+        self::assertNotSame(-1, $secondPid);
+
+        if ($secondPid === 0) {
+            $runTransfer('INTEGRATION-CONCURRENT-TRANSFER-002');
+        }
+
+        usleep(100000);
+
+        file_put_contents($startFile, 'start');
+
+        pcntl_waitpid($firstPid, $firstStatus);
+        pcntl_waitpid($secondPid, $secondStatus);
+
+        @unlink($startFile);
+
+        $this->connection = ConnectionFactory::create();
+
+        self::assertTrue(pcntl_wifexited($firstStatus));
+        self::assertTrue(pcntl_wifexited($secondStatus));
+
+        $exitCodes = [
+            pcntl_wexitstatus($firstStatus),
+            pcntl_wexitstatus($secondStatus),
+        ];
+
+        sort($exitCodes);
+
+        self::assertSame([0, 2], $exitCodes);
+
+        $statement = $this->connection->prepare(
+            '
+        SELECT id, balance
+        FROM accounts
+        WHERE id IN (:source_id, :destination_id)
+        '
+        );
+
+        $statement->execute([
+            'source_id' => $this->sourceAccountId,
+            'destination_id' => $this->destinationAccountId,
+        ]);
+
+        $accounts = [];
+
+        foreach ($statement->fetchAll() as $account) {
+            $accounts[(int) $account['id']] = (string) $account['balance'];
+        }
+
+        self::assertSame(
+            '20.00',
+            $accounts[$this->sourceAccountId]
+        );
+
+        self::assertSame(
+            '80.00',
+            $accounts[$this->destinationAccountId]
+        );
+
+        $operationStatement = $this->connection->prepare(
+            '
+        SELECT COUNT(*)
+        FROM operations
+        WHERE type = :type
+          AND source_account_id = :source_id
+          AND destination_account_id = :destination_id
+        '
+        );
+
+        $operationStatement->execute([
+            'type' => 'TRANSFER',
+            'source_id' => $this->sourceAccountId,
+            'destination_id' => $this->destinationAccountId,
         ]);
 
         self::assertSame(
