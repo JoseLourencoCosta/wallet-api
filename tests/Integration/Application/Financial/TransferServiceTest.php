@@ -26,11 +26,11 @@ final class TransferServiceTest extends TestCase
     private int $destinationAccountId;
 
     protected function setUp(): void
-{
-    $this->connection = ConnectionFactory::create();
+    {
+        $this->connection = ConnectionFactory::create();
 
-    $this->connection->exec(
-        "
+        $this->connection->exec(
+            "
         DELETE FROM ledger_entries
         WHERE account_id IN (
             SELECT a.id
@@ -43,10 +43,10 @@ final class TransferServiceTest extends TestCase
             )
         )
         "
-    );
+        );
 
-    $this->connection->exec(
-        "
+        $this->connection->exec(
+            "
         DELETE FROM operations
         WHERE source_account_id IN (
             SELECT a.id
@@ -69,10 +69,10 @@ final class TransferServiceTest extends TestCase
             )
         )
         "
-    );
+        );
 
-    $this->connection->exec(
-        "
+        $this->connection->exec(
+            "
         DELETE FROM accounts
         WHERE user_id IN (
             SELECT id
@@ -83,71 +83,71 @@ final class TransferServiceTest extends TestCase
             )
         )
         "
-    );
+        );
 
-    $this->connection->exec(
-        "
+        $this->connection->exec(
+            "
         DELETE FROM users
         WHERE email IN (
             'transfer.source@integration.wallet.local',
             'transfer.destination@integration.wallet.local'
         )
         "
-    );
+        );
 
-    $publicIdGenerator = new PublicIdGenerator();
-    $userRepository = new UserRepository($this->connection);
-    $accountRepository = new AccountRepository($this->connection);
-    $accountNumberGenerator = new AccountNumberGenerator();
+        $publicIdGenerator = new PublicIdGenerator();
+        $userRepository = new UserRepository($this->connection);
+        $accountRepository = new AccountRepository($this->connection);
+        $accountNumberGenerator = new AccountNumberGenerator();
 
-    $this->sourceUserId = $userRepository->create(
-        $publicIdGenerator->generate(),
-        'Transfer Source User',
-        'transfer.source@integration.wallet.local',
-        password_hash('SenhaTeste123!', PASSWORD_DEFAULT)
-    );
+        $this->sourceUserId = $userRepository->create(
+            $publicIdGenerator->generate(),
+            'Transfer Source User',
+            'transfer.source@integration.wallet.local',
+            password_hash('SenhaTeste123!', PASSWORD_DEFAULT)
+        );
 
-    $this->destinationUserId = $userRepository->create(
-        $publicIdGenerator->generate(),
-        'Transfer Destination User',
-        'transfer.destination@integration.wallet.local',
-        password_hash('SenhaTeste123!', PASSWORD_DEFAULT)
-    );
+        $this->destinationUserId = $userRepository->create(
+            $publicIdGenerator->generate(),
+            'Transfer Destination User',
+            'transfer.destination@integration.wallet.local',
+            password_hash('SenhaTeste123!', PASSWORD_DEFAULT)
+        );
 
-    $sourceAccount = $accountNumberGenerator->generate();
-    $destinationAccount = $accountNumberGenerator->generate();
+        $sourceAccount = $accountNumberGenerator->generate();
+        $destinationAccount = $accountNumberGenerator->generate();
 
-    $this->sourceAccountId = $accountRepository->create(
-        $publicIdGenerator->generate(),
-        $this->sourceUserId,
-        '0001',
-        $sourceAccount['number'],
-        $sourceAccount['digit']
-    );
+        $this->sourceAccountId = $accountRepository->create(
+            $publicIdGenerator->generate(),
+            $this->sourceUserId,
+            '0001',
+            $sourceAccount['number'],
+            $sourceAccount['digit']
+        );
 
-    $this->destinationAccountId = $accountRepository->create(
-        $publicIdGenerator->generate(),
-        $this->destinationUserId,
-        '0001',
-        $destinationAccount['number'],
-        $destinationAccount['digit']
-    );
+        $this->destinationAccountId = $accountRepository->create(
+            $publicIdGenerator->generate(),
+            $this->destinationUserId,
+            '0001',
+            $destinationAccount['number'],
+            $destinationAccount['digit']
+        );
 
-    $depositService = new DepositService(
-        $this->connection,
-        $accountRepository,
-        new OperationRepository($this->connection),
-        new LedgerEntryRepository($this->connection),
-        $publicIdGenerator
-    );
+        $depositService = new DepositService(
+            $this->connection,
+            $accountRepository,
+            new OperationRepository($this->connection),
+            new LedgerEntryRepository($this->connection),
+            $publicIdGenerator
+        );
 
-    $depositService->execute(
-        $this->sourceAccountId,
-        '100.00',
-        'INTEGRATION-TRANSFER-FUND-001',
-        $this->sourceUserId
-    );
-}
+        $depositService->execute(
+            $this->sourceAccountId,
+            '100.00',
+            'INTEGRATION-TRANSFER-FUND-001',
+            $this->sourceUserId
+        );
+    }
 
     public function testTransferMovesMoneyAndCreatesDoubleLedgerEntry(): void
     {
@@ -158,8 +158,8 @@ final class TransferServiceTest extends TestCase
             new LedgerEntryRepository($this->connection),
             new PublicIdGenerator(),
             new PasswordTransactionAuthorizer(
-    new UserRepository($this->connection)
-)
+                new UserRepository($this->connection)
+            )
         );
 
         $result = $service->execute(
@@ -167,7 +167,8 @@ final class TransferServiceTest extends TestCase
             $this->destinationAccountId,
             '25.50',
             $this->sourceUserId,
-            'SenhaTeste123!'
+            'SenhaTeste123!',
+            'INTEGRATION-TRANSFER-001'
         );
 
         self::assertSame('100.00', $result['source_balance_before']);
@@ -259,250 +260,253 @@ final class TransferServiceTest extends TestCase
     }
 
     public function testTransferWithInvalidPasswordDoesNotChangeFinancialState(): void
-{
-    $service = new TransferService(
-        $this->connection,
-        new AccountRepository($this->connection),
-        new OperationRepository($this->connection),
-        new LedgerEntryRepository($this->connection),
-        new PublicIdGenerator(),
-        new PasswordTransactionAuthorizer(
-            new UserRepository($this->connection)
-        )
-    );
-
-    try {
-        $service->execute(
-            $this->sourceAccountId,
-            $this->destinationAccountId,
-            '25.50',
-            $this->sourceUserId,
-            'SenhaErrada123!'
+    {
+        $service = new TransferService(
+            $this->connection,
+            new AccountRepository($this->connection),
+            new OperationRepository($this->connection),
+            new LedgerEntryRepository($this->connection),
+            new PublicIdGenerator(),
+            new PasswordTransactionAuthorizer(
+                new UserRepository($this->connection)
+            )
         );
 
-        self::fail('Expected invalid transaction authorization.');
-    } catch (\RuntimeException $exception) {
-        self::assertSame(
-            'Invalid transaction authorization.',
-            $exception->getMessage()
-        );
-    }
+        try {
+            $service->execute(
+                $this->sourceAccountId,
+                $this->destinationAccountId,
+                '25.50',
+                $this->sourceUserId,
+                'SenhaErrada123!',
+                'INTEGRATION-TRANSFER-INVALID-PASSWORD'
+            );
 
-    $statement = $this->connection->prepare(
-        '
+            self::fail('Expected invalid transaction authorization.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame(
+                'Invalid transaction authorization.',
+                $exception->getMessage()
+            );
+        }
+
+        $statement = $this->connection->prepare(
+            '
         SELECT id, balance
         FROM accounts
         WHERE id IN (:source_id, :destination_id)
         '
-    );
+        );
 
-    $statement->execute([
-        'source_id' => $this->sourceAccountId,
-        'destination_id' => $this->destinationAccountId,
-    ]);
+        $statement->execute([
+            'source_id' => $this->sourceAccountId,
+            'destination_id' => $this->destinationAccountId,
+        ]);
 
-    $accounts = [];
+        $accounts = [];
 
-    foreach ($statement->fetchAll() as $account) {
-        $accounts[(int) $account['id']] = (string) $account['balance'];
-    }
+        foreach ($statement->fetchAll() as $account) {
+            $accounts[(int) $account['id']] = (string) $account['balance'];
+        }
 
-    self::assertSame(
-        '100.00',
-        $accounts[$this->sourceAccountId]
-    );
+        self::assertSame(
+            '100.00',
+            $accounts[$this->sourceAccountId]
+        );
 
-    self::assertSame(
-        '0.00',
-        $accounts[$this->destinationAccountId]
-    );
+        self::assertSame(
+            '0.00',
+            $accounts[$this->destinationAccountId]
+        );
 
-    $operationStatement = $this->connection->prepare(
-        '
+        $operationStatement = $this->connection->prepare(
+            '
         SELECT COUNT(*)
         FROM operations
         WHERE type = :type
           AND source_account_id = :source_id
           AND destination_account_id = :destination_id
         '
-    );
-
-    $operationStatement->execute([
-        'type' => 'TRANSFER',
-        'source_id' => $this->sourceAccountId,
-        'destination_id' => $this->destinationAccountId,
-    ]);
-
-    self::assertSame(
-        0,
-        (int) $operationStatement->fetchColumn()
-    );
-}
-
-public function testUserCannotTransferFromAccountTheyDoNotOwn(): void
-{
-    $service = new TransferService(
-        $this->connection,
-        new AccountRepository($this->connection),
-        new OperationRepository($this->connection),
-        new LedgerEntryRepository($this->connection),
-        new PublicIdGenerator(),
-        new PasswordTransactionAuthorizer(
-            new UserRepository($this->connection)
-        )
-    );
-
-    try {
-        $service->execute(
-            $this->sourceAccountId,
-            $this->destinationAccountId,
-            '25.50',
-            $this->destinationUserId,
-            'SenhaTeste123!'
         );
 
-        self::fail('Expected account ownership validation to fail.');
-    } catch (\RuntimeException $exception) {
+        $operationStatement->execute([
+            'type' => 'TRANSFER',
+            'source_id' => $this->sourceAccountId,
+            'destination_id' => $this->destinationAccountId,
+        ]);
+
         self::assertSame(
-            'User is not authorized to operate this account.',
-            $exception->getMessage()
+            0,
+            (int) $operationStatement->fetchColumn()
         );
     }
 
-    $statement = $this->connection->prepare(
-        '
+    public function testUserCannotTransferFromAccountTheyDoNotOwn(): void
+    {
+        $service = new TransferService(
+            $this->connection,
+            new AccountRepository($this->connection),
+            new OperationRepository($this->connection),
+            new LedgerEntryRepository($this->connection),
+            new PublicIdGenerator(),
+            new PasswordTransactionAuthorizer(
+                new UserRepository($this->connection)
+            )
+        );
+
+        try {
+            $service->execute(
+                $this->sourceAccountId,
+                $this->destinationAccountId,
+                '25.50',
+                $this->destinationUserId,
+                'SenhaTeste123!',
+                'INTEGRATION-TRANSFER-UNAUTHORIZED-OWNER'
+            );
+
+            self::fail('Expected account ownership validation to fail.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame(
+                'User is not authorized to operate this account.',
+                $exception->getMessage()
+            );
+        }
+
+        $statement = $this->connection->prepare(
+            '
         SELECT id, balance
         FROM accounts
         WHERE id IN (:source_id, :destination_id)
         '
-    );
+        );
 
-    $statement->execute([
-        'source_id' => $this->sourceAccountId,
-        'destination_id' => $this->destinationAccountId,
-    ]);
+        $statement->execute([
+            'source_id' => $this->sourceAccountId,
+            'destination_id' => $this->destinationAccountId,
+        ]);
 
-    $accounts = [];
+        $accounts = [];
 
-    foreach ($statement->fetchAll() as $account) {
-        $accounts[(int) $account['id']] = (string) $account['balance'];
-    }
+        foreach ($statement->fetchAll() as $account) {
+            $accounts[(int) $account['id']] = (string) $account['balance'];
+        }
 
-    self::assertSame(
-        '100.00',
-        $accounts[$this->sourceAccountId]
-    );
+        self::assertSame(
+            '100.00',
+            $accounts[$this->sourceAccountId]
+        );
 
-    self::assertSame(
-        '0.00',
-        $accounts[$this->destinationAccountId]
-    );
+        self::assertSame(
+            '0.00',
+            $accounts[$this->destinationAccountId]
+        );
 
-    $operationStatement = $this->connection->prepare(
-        '
+        $operationStatement = $this->connection->prepare(
+            '
         SELECT COUNT(*)
         FROM operations
         WHERE type = :type
           AND source_account_id = :source_id
           AND destination_account_id = :destination_id
         '
-    );
+        );
 
-    $operationStatement->execute([
-        'type' => 'TRANSFER',
-        'source_id' => $this->sourceAccountId,
-        'destination_id' => $this->destinationAccountId,
-    ]);
+        $operationStatement->execute([
+            'type' => 'TRANSFER',
+            'source_id' => $this->sourceAccountId,
+            'destination_id' => $this->destinationAccountId,
+        ]);
 
-    self::assertSame(
-        0,
-        (int) $operationStatement->fetchColumn()
-    );
-}
+        self::assertSame(
+            0,
+            (int) $operationStatement->fetchColumn()
+        );
+    }
 
     public function testTransferWithInsufficientBalanceDoesNotChangeFinancialState(): void
-{
-    $service = new TransferService(
-        $this->connection,
-        new AccountRepository($this->connection),
-        new OperationRepository($this->connection),
-        new LedgerEntryRepository($this->connection),
-        new PublicIdGenerator(),
-        new PasswordTransactionAuthorizer(
-        new UserRepository($this->connection)
-        )
-    );
-
-    try {
-        $service->execute(
-            $this->sourceAccountId,
-            $this->destinationAccountId,
-            '150.00',
-            $this->sourceUserId,
-            'SenhaTeste123!'
+    {
+        $service = new TransferService(
+            $this->connection,
+            new AccountRepository($this->connection),
+            new OperationRepository($this->connection),
+            new LedgerEntryRepository($this->connection),
+            new PublicIdGenerator(),
+            new PasswordTransactionAuthorizer(
+                new UserRepository($this->connection)
+            )
         );
 
-        self::fail('Expected insufficient balance to fail.');
-    } catch (\RuntimeException $exception) {
-        self::assertSame(
-            'Insufficient balance.',
-            $exception->getMessage()
-        );
-    }
+        try {
+            $service->execute(
+                $this->sourceAccountId,
+                $this->destinationAccountId,
+                '150.00',
+                $this->sourceUserId,
+                'SenhaTeste123!',
+                'INTEGRATION-TRANSFER-INSUFFICIENT'
+            );
 
-    $statement = $this->connection->prepare(
-        '
+            self::fail('Expected insufficient balance to fail.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame(
+                'Insufficient balance.',
+                $exception->getMessage()
+            );
+        }
+
+        $statement = $this->connection->prepare(
+            '
         SELECT id, balance
         FROM accounts
         WHERE id IN (:source_id, :destination_id)
         '
-    );
+        );
 
-   $statement->execute([
-    'source_id' => $this->sourceAccountId,
-    'destination_id' => $this->destinationAccountId,
-]);
+        $statement->execute([
+            'source_id' => $this->sourceAccountId,
+            'destination_id' => $this->destinationAccountId,
+        ]);
 
-    $accounts = [];
+        $accounts = [];
 
-    foreach ($statement->fetchAll() as $account) {
-        $accounts[(int) $account['id']] = (string) $account['balance'];
-    }
+        foreach ($statement->fetchAll() as $account) {
+            $accounts[(int) $account['id']] = (string) $account['balance'];
+        }
 
-    self::assertSame(
-        '100.00',
-        $accounts[$this->sourceAccountId]
-    );
+        self::assertSame(
+            '100.00',
+            $accounts[$this->sourceAccountId]
+        );
 
-    self::assertSame(
-        '0.00',
-        $accounts[$this->destinationAccountId]
-    );
+        self::assertSame(
+            '0.00',
+            $accounts[$this->destinationAccountId]
+        );
 
-    $operationStatement = $this->connection->prepare(
-        '
+        $operationStatement = $this->connection->prepare(
+            '
         SELECT COUNT(*)
         FROM operations
         WHERE type = :type
           AND source_account_id = :source_id
           AND destination_account_id = :destination_id
         '
-    );
+        );
 
-    $operationStatement->execute([
-        'type' => 'TRANSFER',
-        'source_id' => $this->sourceAccountId,
-        'destination_id' => $this->destinationAccountId,
-        'SenhaTeste123!'
-    ]);
+        $operationStatement->execute([
+            'type' => 'TRANSFER',
+            'source_id' => $this->sourceAccountId,
+            'destination_id' => $this->destinationAccountId,
+            'SenhaTeste123!'
+        ]);
 
-    self::assertSame(
-        0,
-        (int) $operationStatement->fetchColumn()
-    );
+        self::assertSame(
+            0,
+            (int) $operationStatement->fetchColumn()
+        );
 
-    $ledgerStatement = $this->connection->prepare(
-        '
+        $ledgerStatement = $this->connection->prepare(
+            '
         SELECT COUNT(*)
         FROM ledger_entries
         WHERE account_id IN (:source_id, :destination_id)
@@ -512,18 +516,212 @@ public function testUserCannotTransferFromAccountTheyDoNotOwn(): void
               WHERE type = :type
           )
         '
-    );
+        );
 
-    $ledgerStatement->execute([
-        'source_id' => $this->sourceAccountId,
-        'destination_id' => $this->destinationAccountId,
-        'type' => 'TRANSFER',
-        'SenhaTeste123!'
-    ]);
+        $ledgerStatement->execute([
+            'source_id' => $this->sourceAccountId,
+            'destination_id' => $this->destinationAccountId,
+            'type' => 'TRANSFER',
+            'SenhaTeste123!'
+        ]);
 
-    self::assertSame(
-        0,
-        (int) $ledgerStatement->fetchColumn()
-    );
-  }
+        self::assertSame(
+            0,
+            (int) $ledgerStatement->fetchColumn()
+        );
+    }
+
+    public function testRepeatedTransferWithSameIdempotencyKeyDoesNotMoveMoneyTwice(): void
+    {
+        $service = new TransferService(
+            $this->connection,
+            new AccountRepository($this->connection),
+            new OperationRepository($this->connection),
+            new LedgerEntryRepository($this->connection),
+            new PublicIdGenerator(),
+            new PasswordTransactionAuthorizer(
+                new UserRepository($this->connection)
+            )
+        );
+
+        $idempotencyKey = 'INTEGRATION-TRANSFER-IDEMPOTENT-001';
+
+        $firstResult = $service->execute(
+            $this->sourceAccountId,
+            $this->destinationAccountId,
+            '25.50',
+            $this->sourceUserId,
+            'SenhaTeste123!',
+            $idempotencyKey
+        );
+
+        $secondResult = $service->execute(
+            $this->sourceAccountId,
+            $this->destinationAccountId,
+            '25.50',
+            $this->sourceUserId,
+            'SenhaTeste123!',
+            $idempotencyKey
+        );
+
+        self::assertFalse($firstResult['idempotent_replay']);
+        self::assertTrue($secondResult['idempotent_replay']);
+
+        self::assertSame(
+            $firstResult['operation_id'],
+            $secondResult['operation_id']
+        );
+
+        $balanceStatement = $this->connection->prepare(
+            '
+        SELECT id, balance
+        FROM accounts
+        WHERE id IN (:source_id, :destination_id)
+        '
+        );
+
+        $balanceStatement->execute([
+            'source_id' => $this->sourceAccountId,
+            'destination_id' => $this->destinationAccountId,
+        ]);
+
+        $accounts = [];
+
+        foreach ($balanceStatement->fetchAll() as $account) {
+            $accounts[(int) $account['id']] = (string) $account['balance'];
+        }
+
+        self::assertSame(
+            '74.50',
+            $accounts[$this->sourceAccountId]
+        );
+
+        self::assertSame(
+            '25.50',
+            $accounts[$this->destinationAccountId]
+        );
+
+        $operationStatement = $this->connection->prepare(
+            '
+        SELECT COUNT(*)
+        FROM operations
+        WHERE idempotency_key = :idempotency_key
+        '
+        );
+
+        $operationStatement->execute([
+            'idempotency_key' => $idempotencyKey,
+        ]);
+
+        self::assertSame(
+            1,
+            (int) $operationStatement->fetchColumn()
+        );
+
+        $ledgerStatement = $this->connection->prepare(
+            '
+        SELECT COUNT(*)
+        FROM ledger_entries
+        WHERE operation_id = :operation_id
+        '
+        );
+
+        $ledgerStatement->execute([
+            'operation_id' => $firstResult['operation_id'],
+        ]);
+
+        self::assertSame(
+            2,
+            (int) $ledgerStatement->fetchColumn()
+        );
+    }
+
+    public function testSameIdempotencyKeyCannotBeReusedForDifferentTransfer(): void
+    {
+        $service = new TransferService(
+            $this->connection,
+            new AccountRepository($this->connection),
+            new OperationRepository($this->connection),
+            new LedgerEntryRepository($this->connection),
+            new PublicIdGenerator(),
+            new PasswordTransactionAuthorizer(
+                new UserRepository($this->connection)
+            )
+        );
+
+        $idempotencyKey = 'INTEGRATION-TRANSFER-IDEMPOTENT-CONFLICT';
+
+        $service->execute(
+            $this->sourceAccountId,
+            $this->destinationAccountId,
+            '25.50',
+            $this->sourceUserId,
+            'SenhaTeste123!',
+            $idempotencyKey
+        );
+
+        try {
+            $service->execute(
+                $this->sourceAccountId,
+                $this->destinationAccountId,
+                '30.00',
+                $this->sourceUserId,
+                'SenhaTeste123!',
+                $idempotencyKey
+            );
+
+            self::fail('Expected idempotency conflict.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame(
+                'Idempotency key already used for another operation.',
+                $exception->getMessage()
+            );
+        }
+
+        $balanceStatement = $this->connection->prepare(
+            '
+        SELECT id, balance
+        FROM accounts
+        WHERE id IN (:source_id, :destination_id)
+        '
+        );
+
+        $balanceStatement->execute([
+            'source_id' => $this->sourceAccountId,
+            'destination_id' => $this->destinationAccountId,
+        ]);
+
+        $accounts = [];
+
+        foreach ($balanceStatement->fetchAll() as $account) {
+            $accounts[(int) $account['id']] = (string) $account['balance'];
+        }
+
+        self::assertSame(
+            '74.50',
+            $accounts[$this->sourceAccountId]
+        );
+
+        self::assertSame(
+            '25.50',
+            $accounts[$this->destinationAccountId]
+        );
+
+        $operationStatement = $this->connection->prepare(
+            '
+        SELECT COUNT(*)
+        FROM operations
+        WHERE idempotency_key = :idempotency_key
+        '
+        );
+
+        $operationStatement->execute([
+            'idempotency_key' => $idempotencyKey,
+        ]);
+
+        self::assertSame(
+            1,
+            (int) $operationStatement->fetchColumn()
+        );
+    }
 }

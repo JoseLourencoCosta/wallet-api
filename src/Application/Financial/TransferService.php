@@ -27,12 +27,13 @@ final class TransferService
     }
 
     public function execute(
-    int $sourceAccountId,
-    int $destinationAccountId,
-    string $amount,
-    int $actorId,
-    string $password
-): array {
+        int $sourceAccountId,
+        int $destinationAccountId,
+        string $amount,
+        int $actorId,
+        string $password,
+        string $idempotencyKey
+     ): array {
         if ($sourceAccountId === $destinationAccountId) {
             throw new InvalidArgumentException(
                 'Source and destination accounts must be different.'
@@ -46,6 +47,33 @@ final class TransferService
                 'Transfer amount must be greater than zero.'
             );
         }
+
+        $existingOperation = $this->operationRepository
+    ->findByIdempotencyKey($idempotencyKey);
+
+if ($existingOperation !== null) {
+    $sameTransfer =
+        $existingOperation['type'] === 'TRANSFER'
+        && (int) $existingOperation['source_account_id'] === $sourceAccountId
+        && (int) $existingOperation['destination_account_id'] === $destinationAccountId
+        && (string) $existingOperation['amount'] === $amount
+        && (int) $existingOperation['actor_id'] === $actorId;
+
+    if (!$sameTransfer) {
+        throw new RuntimeException(
+            'Idempotency key already used for another operation.'
+        );
+    }
+
+    return [
+        'operation_id' => (int) $existingOperation['id'],
+        'operation_public_id' => $existingOperation['public_id'],
+        'source_account_id' => $sourceAccountId,
+        'destination_account_id' => $destinationAccountId,
+        'amount' => (string) $existingOperation['amount'],
+        'idempotent_replay' => true,
+    ];
+}
 
         $this->connection->beginTransaction();
 
@@ -110,16 +138,18 @@ if (!$this->transactionAuthorizer->authorize(
             $operationPublicId = $this->publicIdGenerator->generate();
 
             $operationId = $this->operationRepository->create(
-                $operationPublicId,
-                'TRANSFER',
-                'COMPLETED',
-                $amount,
-                $sourceAccountId,
-                $destinationAccountId,
-                'USER',
-                $actorId,
-                'PASSWORD'
-            );
+    $operationPublicId,
+    'TRANSFER',
+    'COMPLETED',
+    $amount,
+    $sourceAccountId,
+    $destinationAccountId,
+    'USER',
+    $actorId,
+    'PASSWORD',
+    null,
+    $idempotencyKey
+);
 
             $this->accountRepository->updateBalance(
                 $sourceAccountId,
@@ -161,6 +191,7 @@ if (!$this->transactionAuthorizer->authorize(
                 'amount' => $amount,
                 'source_balance_before' => $sourceBalanceBefore,
                 'source_balance_after' => $sourceBalanceAfter,
+                'idempotent_replay' => false,
                 'destination_balance_before' => $destinationBalanceBefore,
                 'destination_balance_after' => $destinationBalanceAfter,
             ];
