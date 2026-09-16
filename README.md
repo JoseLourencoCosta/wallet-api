@@ -337,6 +337,65 @@ Transferências com saldo insuficiente são rejeitadas sem alteração dos saldo
 
 ---
 
+## Idempotência de transferências
+
+Transferências utilizam uma `idempotency_key` para impedir que a repetição da mesma requisição financeira movimente dinheiro mais de uma vez.
+
+A chave é persistida em `operations` e possui constraint `UNIQUE` no banco de dados.
+
+```text
+mesma idempotency_key
++
+mesma transferência
+        ↓
+operação original é reutilizada
+        ↓
+nenhum novo débito
+nenhum novo crédito
+nenhuma nova operação
+```
+
+O retorno identifica quando a requisição foi tratada como repetição idempotente:
+
+```text
+idempotent_replay = true
+```
+
+A primeira execução retorna:
+
+```text
+idempotent_replay = false
+```
+
+A chave também não pode ser reutilizada para representar outra movimentação.
+
+```text
+mesma idempotency_key
++
+valor, origem, destino ou ator diferente
+        ↓
+requisição rejeitada
+```
+
+Isso protege cenários comuns em sistemas financeiros, como:
+
+```text
+cliente envia transferência
+ ↓
+servidor processa
+ ↓
+resposta sofre timeout
+ ↓
+cliente repete requisição
+ ↓
+sistema recupera a operação original
+em vez de transferir novamente
+```
+
+Além da validação na aplicação, o banco possui uma constraint `UNIQUE` sobre `idempotency_key`, funcionando como última linha de defesa contra duplicidade.
+
+---
+
 ## Autenticação e autorização transacional
 
 Autenticação de acesso e autorização de uma operação financeira são responsabilidades diferentes.
@@ -427,8 +486,8 @@ Os testes são executados com PHPUnit.
 Atualmente:
 
 ```text
-15 testes
-66 assertions
+17 testes
+77 assertions
 100% passando
 ```
 
@@ -459,6 +518,10 @@ A cobertura comportamental atual inclui:
 - rejeição de senha incorreta;
 - validação de propriedade da conta de origem;
 - bloqueio da tentativa de movimentar conta de outro usuário.
+- repetição idempotente de transferência;
+- prevenção de débito duplicado;
+- reutilização da operação financeira original;
+- rejeição de `idempotency_key` reutilizada com dados diferentes.
 
 Os testes de integração criam seus próprios dados e realizam limpeza respeitando as relações de foreign key.
 
@@ -539,11 +602,15 @@ docker compose run --rm app ./vendor/bin/phpunit
 - [x] PHPUnit
 - [x] Testes unitários
 - [x] Testes de integração
-- [x] 15 testes / 66 assertions
+- [x] Idempotency key em operações financeiras
+- [x] Constraint UNIQUE para idempotency_key
+- [x] Replay idempotente de transferências
+- [x] Prevenção de débito/crédito duplicado
+- [x] Detecção de conflito de idempotency key
+- [x] 17 testes / 77 assertions
 
 ### Próximas etapas
 
-- [ ] Idempotência de operações financeiras
 - [ ] Testes de concorrência real
 - [ ] Estornos com operação compensatória
 - [ ] Split Payment IBS/CBS
@@ -552,25 +619,6 @@ docker compose run --rm app ./vendor/bin/phpunit
 ---
 
 ## Roadmap financeiro
-
-### Idempotência
-
-Impedir que a repetição da mesma requisição financeira gere duas operações.
-
-Exemplo:
-
-```text
-requisição enviada
- ↓
-timeout na resposta
- ↓
-cliente repete a requisição
- ↓
-mesma operação é recuperada
-em vez de executar novamente
-```
-
----
 
 ### Concorrência real
 
