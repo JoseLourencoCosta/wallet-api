@@ -95,6 +95,7 @@ final class OperationRepository
             reference_id,
             idempotency_key,
             created_at,
+            reversal_of_operation_id,
             completed_at
         FROM operations
         WHERE idempotency_key = :idempotency_key
@@ -103,6 +104,76 @@ final class OperationRepository
 
         $statement->execute([
             'idempotency_key' => $idempotencyKey,
+        ]);
+
+        $operation = $statement->fetch();
+
+        if ($operation === false) {
+            return null;
+        }
+
+        return $operation;
+    }
+
+    public function findByIdForUpdate(int $operationId): array
+    {
+        $statement = $this->connection->prepare(
+            '
+        SELECT
+            id,
+            public_id,
+            type,
+            status,
+            amount,
+            source_account_id,
+            destination_account_id,
+            actor_type,
+            actor_id,
+            authorization_method,
+            reference_id,
+            idempotency_key,
+            reversal_of_operation_id,
+            created_at,
+            completed_at
+        FROM operations
+        WHERE id = :id
+        FOR UPDATE
+        '
+        );
+
+        $statement->execute([
+            'id' => $operationId,
+        ]);
+
+        $operation = $statement->fetch();
+
+        if ($operation === false) {
+            throw new \RuntimeException('Operation not found.');
+        }
+
+        return $operation;
+    }
+
+    public function findReversalByOriginalOperationId(
+        int $operationId
+    ): ?array {
+        $statement = $this->connection->prepare(
+            '
+        SELECT
+            id,
+            public_id,
+            type,
+            status,
+            amount,
+            reversal_of_operation_id
+        FROM operations
+        WHERE reversal_of_operation_id = :operation_id
+        LIMIT 1
+        '
+        );
+
+        $statement->execute([
+            'operation_id' => $operationId,
         ]);
 
         $operation = $statement->fetch();
