@@ -7,7 +7,7 @@ namespace App\Infrastructure\Http\Handler;
 use App\Application\User\RegisterUser;
 use App\Infrastructure\Http\JsonResponse;
 use App\Infrastructure\Http\Request;
-use PDOException;
+use App\Domain\User\EmailAlreadyRegistered;
 use Throwable;
 
 final class RegisterUserHandler
@@ -78,20 +78,11 @@ final class RegisterUserHandler
                     ],
                 ]
             );
-        } catch (PDOException $exception) {
-            if ((string) $exception->getCode() === '23000') {
-                return new JsonResponse(
-                    409,
-                    [
-                        'error' => 'Email already registered.',
-                    ]
-                );
-            }
-
+        } catch (EmailAlreadyRegistered) {
             return new JsonResponse(
-                500,
+                409,
                 [
-                    'error' => 'Internal server error.',
+                    'error' => 'Email already registered.',
                 ]
             );
         } catch (Throwable) {
