@@ -18,24 +18,59 @@ final class RegisterUserTest extends TestCase
     private PDO $connection;
 
     protected function setUp(): void
-{
-    $this->connection = ConnectionFactory::create();
+    {
+        $this->connection = ConnectionFactory::create();
 
-    $this->connection->exec(
-        "
-        DELETE FROM ledger_entries
-        WHERE account_id IN (
+        $this->connection->exec(
+            "
+    DELETE FROM ledger_entries
+    WHERE operation_id IN (
+        SELECT id
+        FROM operations
+        WHERE source_account_id IN (
             SELECT a.id
             FROM accounts a
             INNER JOIN users u
                 ON u.id = a.user_id
             WHERE u.email LIKE '%@integration.wallet.local'
         )
-        "
-    );
+        OR destination_account_id IN (
+            SELECT a.id
+            FROM accounts a
+            INNER JOIN users u
+                ON u.id = a.user_id
+            WHERE u.email LIKE '%@integration.wallet.local'
+        )
+    )
+    "
+        );
 
-    $this->connection->exec(
-        "
+        $this->connection->exec(
+            "
+    DELETE FROM split_payments
+    WHERE operation_id IN (
+        SELECT id
+        FROM operations
+        WHERE source_account_id IN (
+            SELECT a.id
+            FROM accounts a
+            INNER JOIN users u
+                ON u.id = a.user_id
+            WHERE u.email LIKE '%@integration.wallet.local'
+        )
+        OR destination_account_id IN (
+            SELECT a.id
+            FROM accounts a
+            INNER JOIN users u
+                ON u.id = a.user_id
+            WHERE u.email LIKE '%@integration.wallet.local'
+        )
+    )
+    "
+        );
+
+        $this->connection->exec(
+            "
         DELETE FROM operations
         WHERE source_account_id IN (
             SELECT a.id
@@ -52,10 +87,10 @@ final class RegisterUserTest extends TestCase
             WHERE u.email LIKE '%@integration.wallet.local'
         )
         "
-    );
+        );
 
-    $this->connection->exec(
-        "
+        $this->connection->exec(
+            "
         DELETE FROM accounts
         WHERE user_id IN (
             SELECT id
@@ -63,15 +98,15 @@ final class RegisterUserTest extends TestCase
             WHERE email LIKE '%@integration.wallet.local'
         )
         "
-    );
+        );
 
-    $this->connection->exec(
-        "
+        $this->connection->exec(
+            "
         DELETE FROM users
         WHERE email LIKE '%@integration.wallet.local'
         "
-    );
-}
+        );
+    }
 
     public function testUserAndAccountAreCreatedTogether(): void
     {
@@ -109,51 +144,51 @@ final class RegisterUserTest extends TestCase
     }
 
     public function testUserIsNotPersistedWhenAccountCreationFails(): void
-{
-    $userRepository = new UserRepository($this->connection);
+    {
+        $userRepository = new UserRepository($this->connection);
 
-    $this->connection->beginTransaction();
+        $this->connection->beginTransaction();
 
-    try {
-        $userId = $userRepository->create(
-            (new PublicIdGenerator())->generate(),
-            'Rollback Integration User',
-            'rollback@integration.wallet.local',
-            password_hash('SenhaTeste123!', PASSWORD_DEFAULT)
-        );
+        try {
+            $userId = $userRepository->create(
+                (new PublicIdGenerator())->generate(),
+                'Rollback Integration User',
+                'rollback@integration.wallet.local',
+                password_hash('SenhaTeste123!', PASSWORD_DEFAULT)
+            );
 
-        $accountRepository = new AccountRepository($this->connection);
+            $accountRepository = new AccountRepository($this->connection);
 
-        $accountRepository->create(
-            (new PublicIdGenerator())->generate(),
-            $userId,
-            '0001',
-            '269079',
-            '9'
-        );
+            $accountRepository->create(
+                (new PublicIdGenerator())->generate(),
+                $userId,
+                '0001',
+                '269079',
+                '9'
+            );
 
-        $this->connection->commit();
+            $this->connection->commit();
 
-        self::fail('Expected account creation to fail.');
-    } catch (\Throwable) {
-        if ($this->connection->inTransaction()) {
-            $this->connection->rollBack();
+            self::fail('Expected account creation to fail.');
+        } catch (\Throwable) {
+            if ($this->connection->inTransaction()) {
+                $this->connection->rollBack();
+            }
         }
+
+        $statement = $this->connection->prepare(
+            'SELECT COUNT(*) FROM users WHERE email = :email'
+        );
+
+        $statement->execute([
+            'email' => 'rollback@integration.wallet.local',
+        ]);
+
+        self::assertSame(
+            0,
+            (int) $statement->fetchColumn()
+        );
     }
-
-    $statement = $this->connection->prepare(
-        'SELECT COUNT(*) FROM users WHERE email = :email'
-    );
-
-    $statement->execute([
-        'email' => 'rollback@integration.wallet.local',
-    ]);
-
-    self::assertSame(
-        0,
-        (int) $statement->fetchColumn()
-    );
-}
 
     private function createRegisterUser(): RegisterUser
     {

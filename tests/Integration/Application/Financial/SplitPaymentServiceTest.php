@@ -780,4 +780,175 @@ final class SplitPaymentServiceTest extends TestCase
             (int) $splitStatement->fetchColumn()
         );
     }
+
+    public function testConcurrentSplitPaymentsCannotSpendSameBalanceTwice(): void
+    {
+        $startFile = sys_get_temp_dir()
+            . '/wallet-split-concurrency-'
+            . bin2hex(random_bytes(8));
+
+        $runSplit = function (
+            string $idempotencyKey
+        ) use ($startFile): never {
+            while (!file_exists($startFile)) {
+                usleep(1000);
+            }
+
+            try {
+                $connection = ConnectionFactory::create();
+
+                $service = new SplitPaymentService(
+                    $connection,
+                    new AccountRepository($connection),
+                    new OperationRepository($connection),
+                    new SplitPaymentRepository($connection),
+                    new LedgerEntryRepository($connection),
+                    new PublicIdGenerator(),
+                    new PasswordTransactionAuthorizer(
+                        new UserRepository($connection)
+                    )
+                );
+
+                $service->execute(
+                    $this->payerAccountId,
+                    $this->supplierAccountId,
+                    '80.00',
+                    '8.00',
+                    '6.40',
+                    $this->payerUserId,
+                    'SenhaTeste123!',
+                    'INTEGRATION-SPLIT-CONCURRENT-REFERENCE',
+                    $idempotencyKey
+                );
+
+                exit(0);
+            } catch (\RuntimeException $exception) {
+                if ($exception->getMessage() === 'Insufficient balance.') {
+                    exit(2);
+                }
+
+                exit(3);
+            } catch (\Throwable) {
+                exit(4);
+            }
+        };
+
+        $firstPid = pcntl_fork();
+
+        self::assertNotSame(-1, $firstPid);
+
+        if ($firstPid === 0) {
+            $runSplit('INTEGRATION-SPLIT-CONCURRENT-001');
+        }
+
+        $secondPid = pcntl_fork();
+
+        self::assertNotSame(-1, $secondPid);
+
+        if ($secondPid === 0) {
+            $runSplit('INTEGRATION-SPLIT-CONCURRENT-002');
+        }
+
+        usleep(100000);
+
+        file_put_contents($startFile, 'start');
+
+        pcntl_waitpid($firstPid, $firstStatus);
+        pcntl_waitpid($secondPid, $secondStatus);
+
+        @unlink($startFile);
+
+        $this->connection = ConnectionFactory::create();
+
+        self::assertTrue(pcntl_wifexited($firstStatus));
+        self::assertTrue(pcntl_wifexited($secondStatus));
+
+        $exitCodes = [
+            pcntl_wexitstatus($firstStatus),
+            pcntl_wexitstatus($secondStatus),
+        ];
+
+        sort($exitCodes);
+
+        self::assertSame([0, 2], $exitCodes);
+
+        $balanceStatement = $this->connection->prepare(
+            '
+        SELECT
+            id,
+            balance,
+            system_role
+        FROM accounts
+        WHERE id IN (:payer_id, :supplier_id)
+           OR system_role IN (:cbs_role, :ibs_role)
+        '
+        );
+
+        $balanceStatement->execute([
+            'payer_id' => $this->payerAccountId,
+            'supplier_id' => $this->supplierAccountId,
+            'cbs_role' => 'TAX_CBS',
+            'ibs_role' => 'TAX_IBS',
+        ]);
+
+        $payerBalance = null;
+        $supplierBalance = null;
+        $cbsBalance = null;
+        $ibsBalance = null;
+
+        foreach ($balanceStatement->fetchAll() as $account) {
+            $accountId = (int) $account['id'];
+
+            if ($accountId === $this->payerAccountId) {
+                $payerBalance = (string) $account['balance'];
+            }
+
+            if ($accountId === $this->supplierAccountId) {
+                $supplierBalance = (string) $account['balance'];
+            }
+
+            if ($account['system_role'] === 'TAX_CBS') {
+                $cbsBalance = (string) $account['balance'];
+            }
+
+            if ($account['system_role'] === 'TAX_IBS') {
+                $ibsBalance = (string) $account['balance'];
+            }
+        }
+
+        self::assertSame('20.00', $payerBalance);
+        self::assertSame('65.60', $supplierBalance);
+        self::assertSame('8.00', $cbsBalance);
+        self::assertSame('6.40', $ibsBalance);
+
+        $operationStatement = $this->connection->prepare(
+            '
+        SELECT COUNT(*)
+        FROM operations
+        WHERE type = :type
+          AND source_account_id = :source_id
+          AND destination_account_id = :destination_id
+        '
+        );
+
+        $operationStatement->execute([
+            'type' => 'SPLIT_PAYMENT',
+            'source_id' => $this->payerAccountId,
+            'destination_id' => $this->supplierAccountId,
+        ]);
+
+        self::assertSame(
+            1,
+            (int) $operationStatement->fetchColumn()
+        );
+
+        $splitStatement = $this->connection->query(
+            'SELECT COUNT(*) FROM split_payments'
+        );
+
+        self::assertSame(
+            1,
+            (int) $splitStatement->fetchColumn()
+        );
+    }
 }
