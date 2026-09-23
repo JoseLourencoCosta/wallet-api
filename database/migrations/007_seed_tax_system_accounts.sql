@@ -1,0 +1,30 @@
+INSERT INTO accounts (
+    public_id,
+    user_id,
+    account_type,
+    agency,
+    account_number,
+    account_digit,
+    balance,
+    status
+) VALUES
+(
+    '01SYSTEMCBSACCOUNT00000001',
+    NULL,
+    'SYSTEM',
+    '0001',
+    '900001',
+    '0',
+    0.00,
+    'ACTIVE'
+),
+(
+    '01SYSTEMIBSACCOUNT00000001',
+    NULL,
+    'SYSTEM',
+    '0001',
+    '900002',
+    '0',
+    0.00,
+    'ACTIVE'
+);
