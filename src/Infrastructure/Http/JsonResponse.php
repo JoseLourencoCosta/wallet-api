@@ -11,6 +11,16 @@ final class JsonResponse
         private array $body
     ) {}
 
+    public function statusCode(): int
+    {
+        return $this->statusCode;
+    }
+
+    public function body(): array
+    {
+        return $this->body;
+    }
+
     public function send(): void
     {
         http_response_code($this->statusCode);
