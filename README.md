@@ -4,7 +4,7 @@ API de carteira digital desenvolvida em **PHP puro, sem framework**, com foco em
 
 > 🚧 Projeto em desenvolvimento.
 
-O objetivo não é apenas implementar endpoints CRUD, mas explorar problemas encontrados em sistemas financeiros, como controle de saldo, trilha de auditoria, atomicidade, autorização transacional, concorrência, idempotência e histórico imutável de movimentações.
+O objetivo não é apenas implementar endpoints CRUD, mas explorar problemas encontrados em sistemas financeiros, como controle de saldo, trilha de auditoria, atomicidade, autorização transacional, concorrência, idempotência, histórico imutável de movimentações, operações compensatórias e segregação financeira.
 
 ---
 
@@ -95,6 +95,33 @@ O número da conta não é utilizado como chave primária nem como relacionament
 
 ---
 
+### Tipos de conta
+
+O modelo atual distingue contas pertencentes a usuários e contas técnicas do sistema.
+
+```text
+USER
+→ user_id obrigatório
+→ system_role = NULL
+
+SYSTEM
+→ user_id = NULL
+→ system_role obrigatório
+```
+
+As contas técnicas atualmente utilizadas são:
+
+```text
+TAX_CBS
+TAX_IBS
+```
+
+Essas contas são utilizadas pelo fluxo de Split Payment para representar a segregação financeira dos valores destinados a CBS e IBS.
+
+A função da conta é identificada explicitamente por `system_role`, evitando regras escondidas baseadas em números de conta.
+
+---
+
 ### Integridade no banco
 
 Regras importantes também são protegidas pelo banco de dados.
@@ -120,6 +147,15 @@ UNIQUE (agency, account_number)
 ```sql
 CHECK (amount > 0)
 ```
+
+Também existem constraints específicas para:
+
+- tipos de conta;
+- propriedade de contas `USER`;
+- papéis exclusivos de contas `SYSTEM`;
+- idempotência de operações;
+- estorno único por operação;
+- composição financeira de Split Payment.
 
 A validação na aplicação melhora o comportamento para o usuário, enquanto as constraints do banco funcionam como última linha de defesa da integridade.
 
@@ -199,7 +235,8 @@ Operation
    │
    ├── DEPOSIT
    ├── TRANSFER
-   └── REVERSAL (planejado)
+   ├── REVERSAL
+   └── SPLIT_PAYMENT
         │
         ▼
 Ledger Entries
@@ -207,12 +244,13 @@ Ledger Entries
    └── DEBIT
 ```
 
-As tabelas principais são:
+As tabelas financeiras principais são:
 
 ```text
 accounts
 operations
 ledger_entries
+split_payments
 ```
 
 `accounts.balance` representa o estado atual otimizado para leitura.
@@ -220,6 +258,8 @@ ledger_entries
 `operations` representa o evento financeiro.
 
 `ledger_entries` registra o impacto financeiro da operação sobre cada conta.
+
+`split_payments` registra a composição financeira de operações de Split Payment.
 
 Os lançamentos do ledger armazenam:
 
@@ -230,7 +270,9 @@ balance_after
 
 permitindo reconstrução e auditoria da movimentação.
 
-O histórico financeiro é tratado como imutável por regra arquitetural. Correções futuras deverão ocorrer por operações compensatórias, e não pela alteração silenciosa do passado.
+O histórico financeiro é tratado como imutável por regra arquitetural.
+
+Correções são realizadas por novas operações compensatórias, e não pela alteração silenciosa do passado.
 
 ---
 
@@ -373,27 +415,300 @@ A chave também não pode ser reutilizada para representar outra movimentação.
 ```text
 mesma idempotency_key
 +
-valor, origem, destino ou ator diferente
+dados diferentes
         ↓
 requisição rejeitada
 ```
 
-Isso protege cenários comuns em sistemas financeiros, como:
+Além da validação na aplicação, o banco possui uma constraint `UNIQUE` sobre `idempotency_key`, funcionando como última linha de defesa contra duplicidade.
+
+---
+
+## Estornos
+
+Estornos são implementados como **operações compensatórias**.
+
+A movimentação original não é alterada nem apagada.
 
 ```text
-cliente envia transferência
- ↓
-servidor processa
- ↓
-resposta sofre timeout
- ↓
-cliente repete requisição
- ↓
-sistema recupera a operação original
-em vez de transferir novamente
+TRANSFER original
+       ↓
+REVERSAL
+       ↓
+lançamentos compensatórios
 ```
 
-Além da validação na aplicação, o banco possui uma constraint `UNIQUE` sobre `idempotency_key`, funcionando como última linha de defesa contra duplicidade.
+Exemplo:
+
+```text
+saldo inicial
+
+origem  = 100.00
+destino =   0.00
+
+TRANSFER 25.50
+
+origem  = 74.50
+destino = 25.50
+
+REVERSAL 25.50
+
+origem  = 100.00
+destino =   0.00
+```
+
+O histórico permanece contendo as duas operações.
+
+O `REVERSAL` referencia a operação original através de:
+
+```text
+reversal_of_operation_id
+```
+
+O banco possui uma constraint `UNIQUE` sobre esse campo, impedindo que a mesma operação seja estornada mais de uma vez.
+
+O fluxo também valida:
+
+- operação original existente;
+- tipo de operação reversível;
+- status `COMPLETED`;
+- propriedade da conta original;
+- autorização transacional;
+- contas ativas;
+- saldo suficiente na conta que precisa devolver o valor;
+- idempotência do pedido de estorno.
+
+Um estorno produz lançamentos inversos:
+
+```text
+TRANSFER
+
+origem  → DEBIT
+destino → CREDIT
+
+REVERSAL
+
+origem  → CREDIT
+destino → DEBIT
+```
+
+Caso o dinheiro já tenha saído da conta que deveria devolvê-lo e o saldo seja insuficiente, o estorno é rejeitado sem alterar o estado financeiro.
+
+---
+
+## Split Payment
+
+O projeto possui uma implementação de estudo de **Split Payment com segregação de valores de CBS e IBS**.
+
+O objetivo desta etapa não é implementar um motor completo de cálculo tributário.
+
+A aplicação recebe:
+
+```text
+valor bruto
+valor CBS
+valor IBS
+```
+
+e calcula:
+
+```text
+valor fornecedor
+=
+valor bruto
+- CBS
+- IBS
+```
+
+Exemplo utilizado nos testes:
+
+```text
+valor bruto      100.00
+
+fornecedor        82.00
+CBS               10.00
+IBS                8.00
+                  ------
+                 100.00
+```
+
+A composição é persistida em:
+
+```text
+split_payments
+```
+
+A tabela registra:
+
+```text
+gross_amount
+supplier_amount
+cbs_amount
+ibs_amount
+status
+reference_id
+operation_id
+```
+
+O banco também valida diretamente:
+
+```text
+gross_amount
+=
+supplier_amount
++ cbs_amount
++ ibs_amount
+```
+
+---
+
+### Contas técnicas tributárias
+
+Os valores segregados não são apenas registrados como metadados.
+
+Eles produzem movimentações financeiras reais no ledger para contas técnicas do sistema:
+
+```text
+TAX_CBS
+TAX_IBS
+```
+
+Essas contas possuem:
+
+```text
+account_type = SYSTEM
+user_id = NULL
+```
+
+e são identificadas através de:
+
+```text
+system_role
+```
+
+Isso evita depender de IDs ou números mágicos na aplicação.
+
+---
+
+### Ledger balanceado no Split Payment
+
+Uma operação de `100.00` com:
+
+```text
+fornecedor = 82.00
+CBS        = 10.00
+IBS        =  8.00
+```
+
+produz:
+
+```text
+pagador
+DEBIT 100.00
+
+fornecedor
+CREDIT 82.00
+
+TAX_CBS
+CREDIT 10.00
+
+TAX_IBS
+CREDIT 8.00
+```
+
+Logo:
+
+```text
+DEBIT total  = 100.00
+CREDIT total = 100.00
+```
+
+Isso preserva a consistência matemática do ledger.
+
+Valores tributários iguais a `0.00` são permitidos na composição, mas não geram lançamentos de ledger com valor zero.
+
+---
+
+### Atomicidade do Split Payment
+
+O Split Payment é executado dentro de uma única transação.
+
+```text
+BEGIN
+ ↓
+busca das contas técnicas
+ ↓
+lock determinístico das contas
+ ↓
+validação do pagador
+ ↓
+autorização transacional
+ ↓
+validação de saldo
+ ↓
+criação de SPLIT_PAYMENT
+ ↓
+registro da composição
+ ↓
+débito do pagador
+ ↓
+crédito do fornecedor
+ ↓
+crédito TAX_CBS
+ ↓
+crédito TAX_IBS
+ ↓
+ledger
+ ↓
+COMMIT
+```
+
+Qualquer falha resulta em:
+
+```text
+ROLLBACK
+```
+
+evitando estado financeiro parcial.
+
+---
+
+### Idempotência do Split Payment
+
+O fluxo também utiliza `idempotency_key`.
+
+```text
+1ª requisição
+→ movimentação executada
+
+2ª requisição idêntica
+com mesma chave
+→ operação original recuperada
+→ nenhum novo movimento financeiro
+```
+
+Se a mesma chave for reutilizada com dados diferentes:
+
+```text
+mesma idempotency_key
++
+CBS diferente
+ou
+IBS diferente
+ou
+valor diferente
+ou
+contas diferentes
+        ↓
+requisição rejeitada
+```
+
+Isso impede duplicidade de:
+
+- débito do pagador;
+- crédito do fornecedor;
+- segregação CBS;
+- segregação IBS.
 
 ---
 
@@ -409,24 +724,24 @@ Autorização transacional
 → este usuário pode executar esta operação?
 ```
 
-Na V1, a mesma senha utilizada no acesso é reutilizada para revalidação da transferência.
+Na V1, a mesma senha utilizada no acesso é reutilizada para revalidação das operações financeiras protegidas.
 
 Isso não significa que autenticação e autorização sejam a mesma responsabilidade.
 
-Antes de uma transferência:
+Antes de uma operação financeira protegida:
 
 ```text
 usuário
  ↓
-é proprietário da conta de origem?
+é proprietário da conta?
  ↓
 senha válida?
  ↓
 conta ativa?
  ↓
-saldo suficiente?
+regras financeiras atendidas?
  ↓
-transferência autorizada
+operação autorizada
 ```
 
 A autorização atual é registrada como:
@@ -436,16 +751,6 @@ authorization_method = PASSWORD
 ```
 
 Uma senha válida não autoriza o usuário a movimentar uma conta pertencente a outra pessoa.
-
-Tentativas com:
-
-```text
-senha inválida
-ou
-usuário não proprietário
-```
-
-são rejeitadas antes de qualquer movimentação financeira.
 
 A arquitetura permite substituir ou complementar o mecanismo futuramente com:
 
@@ -464,21 +769,26 @@ Depósitos utilizam lock da conta antes da leitura e atualização do saldo.
 
 Transferências bloqueiam as duas contas envolvidas.
 
-Isso evita o padrão vulnerável:
+Split Payments bloqueiam todas as contas envolvidas:
 
 ```text
-ler saldo
-calcular
-gravar
+pagador
+fornecedor
+TAX_CBS
+TAX_IBS
 ```
 
-quando duas operações concorrentes poderiam utilizar o mesmo saldo antigo e sobrescrever resultados.
+Os IDs são ordenados antes da aquisição dos locks.
 
-A ordenação dos locks por ID reduz a possibilidade de deadlock entre transferências em sentidos opostos.
+Isso mantém uma ordem determinística de bloqueio e reduz o risco de deadlocks.
 
-A proteção contra concorrência também é validada por teste de integração multiprocesso.
+---
 
-O cenário atual executa duas transferências simultâneas de `80.00` contra uma conta com saldo inicial de `100.00`.
+### Concorrência real em transferências
+
+A proteção é validada por teste de integração multiprocesso.
+
+O cenário executa duas transferências simultâneas de `80.00` contra uma conta com saldo inicial de `100.00`.
 
 ```text
 saldo inicial: 100.00
@@ -486,7 +796,8 @@ saldo inicial: 100.00
 processo A → tenta transferir 80.00
 processo B → tenta transferir 80.00
 
-resultado esperado:
+resultado:
+
 1 transferência concluída
 1 transferência rejeitada por saldo insuficiente
 
@@ -494,9 +805,57 @@ saldo final origem: 20.00
 saldo final destino: 80.00
 ```
 
-Cada processo utiliza uma conexão PDO independente, permitindo validar contenção real no banco com `SELECT ... FOR UPDATE`.
+Cada processo utiliza uma conexão PDO independente.
 
-Esse teste demonstra que duas operações concorrentes não conseguem consumir o mesmo saldo disponível.
+Isso comprova que duas operações concorrentes não conseguem consumir o mesmo saldo disponível.
+
+---
+
+### Concorrência real no Split Payment
+
+O mesmo princípio é testado no fluxo de Split Payment.
+
+```text
+saldo inicial do pagador: 100.00
+
+processo A → tenta split de 80.00
+processo B → tenta split de 80.00
+```
+
+A composição utilizada é:
+
+```text
+gross      80.00
+supplier   65.60
+CBS         8.00
+IBS         6.40
+```
+
+O resultado esperado e validado é:
+
+```text
+1 SPLIT_PAYMENT concluído
+1 operação rejeitada por saldo insuficiente
+```
+
+Estado final:
+
+```text
+pagador      20.00
+fornecedor   65.60
+TAX_CBS       8.00
+TAX_IBS       6.40
+```
+
+Apenas uma operação `SPLIT_PAYMENT` e um registro em `split_payments` são criados.
+
+Isso impede simultaneamente:
+
+```text
+double spend
++
+dupla segregação tributária
+```
 
 ---
 
@@ -507,8 +866,8 @@ Os testes são executados com PHPUnit.
 Atualmente:
 
 ```text
-18 testes
-85 assertions
+28 testes
+205 assertions
 100% passando
 ```
 
@@ -539,15 +898,32 @@ A cobertura comportamental atual inclui:
 - rejeição de senha incorreta;
 - validação de propriedade da conta de origem;
 - bloqueio da tentativa de movimentar conta de outro usuário;
-- repetição idempotente de transferência;
+- idempotência de transferências;
 - prevenção de débito duplicado;
-- reutilização da operação financeira original;
-- rejeição de `idempotency_key` reutilizada com dados diferentes;
+- conflito de `idempotency_key`;
 - concorrência real entre transferências;
-- contenção de saldo com `SELECT ... FOR UPDATE`;
-- prevenção de double spend em operações simultâneas.
+- prevenção de double spend;
+- operação `REVERSAL`;
+- lançamentos compensatórios;
+- bloqueio de estorno duplicado;
+- idempotência de estornos;
+- autorização de estorno;
+- rejeição de estorno sem saldo para devolução;
+- criação e uso de contas `SYSTEM`;
+- identificação de contas através de `system_role`;
+- operação `SPLIT_PAYMENT`;
+- composição de valores em `split_payments`;
+- segregação de fornecedor, CBS e IBS;
+- ledger balanceado no Split Payment;
+- idempotência de Split Payment;
+- conflito de chave idempotente no Split Payment;
+- rejeição por saldo insuficiente;
+- concorrência real no Split Payment;
+- prevenção de dupla segregação tributária.
 
 Os testes de integração criam seus próprios dados e realizam limpeza respeitando as relações de foreign key.
+
+Os cenários multiprocesso utilizam conexões PDO independentes para representar clientes concorrentes reais disputando o mesmo estado no banco.
 
 ---
 
@@ -607,6 +983,7 @@ docker compose run --rm app ./vendor/bin/phpunit
 - [x] AccountRepository
 - [x] OperationRepository
 - [x] LedgerEntryRepository
+- [x] SplitPaymentRepository
 - [x] Depósitos
 - [x] Transferências
 - [x] Ledger financeiro
@@ -616,75 +993,112 @@ docker compose run --rm app ./vendor/bin/phpunit
 - [x] Rollback automático em falhas
 - [x] Validação de saldo disponível
 - [x] Row locking com SELECT FOR UPDATE
-- [x] Ordenação de locks para redução de deadlocks
+- [x] Ordenação determinística de locks
 - [x] Proteção contra race conditions
 - [x] Separação entre autenticação e autorização transacional
-- [x] Revalidação de senha em transferências
+- [x] Revalidação de senha em operações financeiras
 - [x] Validação de propriedade da conta de origem
-- [x] Bloqueio de transferência com senha inválida
-- [x] Bloqueio de movimentação de conta de terceiro
-- [x] Idempotency key em transferências
+- [x] Idempotency key em operações financeiras
 - [x] Constraint UNIQUE para idempotency_key
 - [x] Replay idempotente de transferências
-- [x] Prevenção de débito/crédito duplicado
-- [x] Detecção de conflito de idempotency key
-- [x] Teste de concorrência real com processos simultâneos
+- [x] Concorrência real entre transferências
 - [x] Prevenção de double spend concorrente
+- [x] Operações compensatórias REVERSAL
+- [x] Referência à operação original
+- [x] Proteção contra estorno duplicado
+- [x] Idempotência de estornos
+- [x] Validação de autorização de estorno
+- [x] Validação de saldo para reversão
+- [x] Contas USER e SYSTEM
+- [x] system_role para contas técnicas
+- [x] Conta técnica TAX_CBS
+- [x] Conta técnica TAX_IBS
+- [x] Split Payment
+- [x] Segregação de fornecedor, CBS e IBS
+- [x] Persistência da composição em split_payments
+- [x] Ledger balanceado no Split Payment
+- [x] Idempotência do Split Payment
+- [x] Concorrência real no Split Payment
+- [x] Prevenção de dupla segregação
 - [x] PHPUnit
 - [x] Testes unitários
 - [x] Testes de integração
-- [x] 18 testes / 85 assertions
+- [x] Testes multiprocesso
+- [x] 28 testes / 205 assertions
 
 ### Próximas etapas
 
-- [ ] Estornos com operação compensatória
-- [ ] Split Payment IBS/CBS
 - [ ] API HTTP REST
+- [ ] Autenticação HTTP
+- [ ] Contratos de request e response
+- [ ] Tratamento padronizado de erros HTTP
+- [ ] Exposição dos casos de uso financeiros por endpoints
+- [ ] Evolução do estudo de Split Payment
+- [ ] Conciliação e estados intermediários
+- [ ] Processamento assíncrono e retries
+- [ ] Pagamentos parcelados
 
 ---
 
-## Roadmap financeiro
+## Roadmap
 
-### Estornos
+### API HTTP REST
 
-Estornos não deverão alterar ou apagar movimentações antigas.
+O próximo grande bloco do projeto será expor os casos de uso existentes através de uma API HTTP.
 
-Uma reversão será registrada como nova operação relacionada à original:
+A camada HTTP deverá funcionar como porta de entrada para a aplicação e não deverá concentrar regras financeiras.
 
 ```text
-TRANSFER original
-       ↓
-REVERSAL
-       ↓
-lançamentos compensatórios
+HTTP Request
+     ↓
+Controller / Handler
+     ↓
+Application Service
+     ↓
+Repositories
+     ↓
+MySQL
 ```
 
+Casos de uso já existentes poderão ser expostos gradualmente:
+
+```text
+cadastro
+depósito
+transferência
+estorno
+split payment
+```
+
+A evolução deverá incluir:
+
+- parsing e validação de requests;
+- responses JSON;
+- códigos HTTP adequados;
+- autenticação;
+- autorização;
+- idempotency key via HTTP;
+- tratamento centralizado de erros;
+- testes de integração da camada HTTP.
+
 ---
 
-### Split Payment IBS/CBS
+### Evolução do Split Payment
 
-O projeto deverá incluir uma implementação de estudo do **Split Payment relacionado ao IBS/CBS**, considerando a evolução do modelo tributário brasileiro.
+A implementação atual cobre a segregação financeira fundamental.
 
-A intenção é utilizar a infraestrutura financeira já construída para explorar:
+Evoluções futuras poderão explorar:
 
-- segregação entre valor comercial e tributos;
-- rastreabilidade no ledger;
-- operações vinculadas;
-- idempotência;
+- estados intermediários de processamento;
 - conciliação;
 - retries;
+- operações pendentes;
+- liquidação posterior;
 - pagamentos parcelados;
-- integração simulada com especificações oficiais.
+- integração simulada com serviços externos;
+- maior aproximação com especificações oficiais aplicáveis.
 
-A implementação será baseada na documentação oficial disponível quando essa etapa for iniciada.
-
----
-
-### API HTTP
-
-Após consolidar as regras financeiras e suas garantias, o domínio será exposto por uma API HTTP REST.
-
-A camada HTTP não deverá conter as regras financeiras, funcionando como porta de entrada para os casos de uso já existentes.
+O cálculo tributário completo permanece fora da responsabilidade atual do motor financeiro.
 
 ---
 
@@ -704,7 +1118,10 @@ A intenção é implementar e compreender diretamente conceitos como:
 - integridade de dados;
 - ledger financeiro;
 - idempotência;
+- operações compensatórias;
+- segregação financeira;
 - testes automatizados;
+- testes multiprocesso;
 - arquitetura;
 - APIs REST.
 
