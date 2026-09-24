@@ -11,6 +11,8 @@ use App\Infrastructure\Http\Router;
 use App\Infrastructure\Persistence\AccountRepository;
 use App\Infrastructure\Persistence\UserRepository;
 use App\Support\Identifier\PublicIdGenerator;
+use App\Application\User\AuthenticateUser;
+use App\Infrastructure\Http\Handler\LoginHandler;
 
 require dirname(__DIR__) . '/vendor/autoload.php';
 
@@ -32,9 +34,22 @@ $registerUserHandlerFactory = static function (): RegisterUserHandler {
     );
 };
 
+$loginHandlerFactory = static function (): LoginHandler {
+    $connection = ConnectionFactory::create();
+
+    $authenticateUser = new AuthenticateUser(
+        new UserRepository($connection)
+    );
+
+    return new LoginHandler(
+        $authenticateUser
+    );
+};
+
 try {
     $router = new Router(
-        $registerUserHandlerFactory
+        $registerUserHandlerFactory,
+        $loginHandlerFactory
     );
 
     $response = $router->dispatch(

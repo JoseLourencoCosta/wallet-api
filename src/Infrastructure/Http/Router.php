@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace App\Infrastructure\Http;
 
 use App\Infrastructure\Http\Handler\RegisterUserHandler;
+use App\Infrastructure\Http\Handler\LoginHandler;
 use Closure;
 
 final class Router
 {
     public function __construct(
-        private Closure $registerUserHandlerFactory
+        private Closure $registerUserHandlerFactory,
+        private Closure $loginHandlerFactory
     ) {}
 
     public function dispatch(Request $request): JsonResponse
@@ -36,6 +38,19 @@ final class Router
             )();
 
             return $registerUserHandler->handle(
+                $request
+            );
+        }
+
+        if (
+            $request->method() === 'POST'
+            && $request->path() === '/login'
+        ) {
+            $loginHandler = (
+                $this->loginHandlerFactory
+            )();
+
+            return $loginHandler->handle(
                 $request
             );
         }

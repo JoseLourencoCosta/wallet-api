@@ -10,16 +10,24 @@ use PHPUnit\Framework\TestCase;
 
 final class RouterTest extends TestCase
 {
-    public function testHealthRouteReturnsOkWithoutBuildingUserHandler(): void
+    public function testHealthRouteReturnsOkWithoutBuildingHandlers(): void
     {
-        $factoryCalled = false;
+        $registerFactoryCalled = false;
+        $loginFactoryCalled = false;
 
         $router = new Router(
-            static function () use (&$factoryCalled) {
-                $factoryCalled = true;
+            static function () use (&$registerFactoryCalled) {
+                $registerFactoryCalled = true;
 
                 throw new \RuntimeException(
-                    'Handler factory should not be called.'
+                    'Register handler factory should not be called.'
+                );
+            },
+            static function () use (&$loginFactoryCalled) {
+                $loginFactoryCalled = true;
+
+                throw new \RuntimeException(
+                    'Login handler factory should not be called.'
                 );
             }
         );
@@ -46,20 +54,32 @@ final class RouterTest extends TestCase
         );
 
         self::assertFalse(
-            $factoryCalled
+            $registerFactoryCalled
+        );
+
+        self::assertFalse(
+            $loginFactoryCalled
         );
     }
 
-    public function testUnknownRouteReturnsNotFoundWithoutBuildingUserHandler(): void
+    public function testUnknownRouteReturnsNotFoundWithoutBuildingHandlers(): void
     {
-        $factoryCalled = false;
+        $registerFactoryCalled = false;
+        $loginFactoryCalled = false;
 
         $router = new Router(
-            static function () use (&$factoryCalled) {
-                $factoryCalled = true;
+            static function () use (&$registerFactoryCalled) {
+                $registerFactoryCalled = true;
 
                 throw new \RuntimeException(
-                    'Handler factory should not be called.'
+                    'Register handler factory should not be called.'
+                );
+            },
+            static function () use (&$loginFactoryCalled) {
+                $loginFactoryCalled = true;
+
+                throw new \RuntimeException(
+                    'Login handler factory should not be called.'
                 );
             }
         );
@@ -86,7 +106,11 @@ final class RouterTest extends TestCase
         );
 
         self::assertFalse(
-            $factoryCalled
+            $registerFactoryCalled
+        );
+
+        self::assertFalse(
+            $loginFactoryCalled
         );
     }
 }

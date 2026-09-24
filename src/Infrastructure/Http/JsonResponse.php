@@ -23,13 +23,19 @@ final class JsonResponse
 
     public function send(): void
     {
+        $json = json_encode(
+            $this->body,
+            JSON_UNESCAPED_UNICODE
+                | JSON_UNESCAPED_SLASHES
+                | JSON_THROW_ON_ERROR
+        );
+
         http_response_code($this->statusCode);
 
-        header('Content-Type: application/json; charset=utf-8');
-
-        echo json_encode(
-            $this->body,
-            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+        header(
+            'Content-Type: application/json; charset=utf-8'
         );
+
+        echo $json;
     }
 }

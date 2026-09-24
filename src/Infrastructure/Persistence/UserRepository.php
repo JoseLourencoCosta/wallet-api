@@ -61,6 +61,41 @@ final class UserRepository
         return (int) $this->connection->lastInsertId();
     }
 
+    public function findByEmail(string $email): ?array
+    {
+        $statement = $this->connection->prepare(
+            '
+        SELECT
+            id,
+            public_id,
+            name,
+            email,
+            password_hash
+        FROM users
+        WHERE email = :email
+        LIMIT 1
+        '
+        );
+
+        $statement->execute([
+            'email' => $email,
+        ]);
+
+        $user = $statement->fetch();
+
+        if ($user === false) {
+            return null;
+        }
+
+        return [
+            'id' => (int) $user['id'],
+            'public_id' => (string) $user['public_id'],
+            'name' => (string) $user['name'],
+            'email' => (string) $user['email'],
+            'password_hash' => (string) $user['password_hash'],
+        ];
+    }
+
     public function findPasswordHashById(int $userId): string
     {
         $statement = $this->connection->prepare(
